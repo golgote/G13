@@ -1,17 +1,20 @@
-//
+// =============================================================
 //  G13App.swift
-//  G13
-//
-//  Created by Bertrand Mansion on 07/03/2026.
-//
+//  App entry point -- menu bar application
+// =============================================================
 
 import SwiftUI
 
 @main
 struct G13App: App {
+
+    @StateObject private var device = G13Device()
+    @StateObject private var keyMapper = KeyMapper()
+    @StateObject private var profileManager = ProfileManager()
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        MenuBarExtra("G13", systemImage: "gamecontroller.fill") {
+            MenuBarView(device: device, keyMapper: keyMapper, profileManager: profileManager)
         }
     }
 }
