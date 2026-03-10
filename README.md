@@ -4,7 +4,7 @@ A native macOS menu bar app for the **Logitech G13 Advanced Gameboard**.
 
 Since Logitech has discontinued support for the G13, there is no official driver for modern macOS. G13 fills that gap — it's a lightweight, open-source Swift app that gives you full control of your G13 directly from the menu bar.
 
-![macOS](https://img.shields.io/badge/macOS-15.0%2B-blue)
+![macOS](https://img.shields.io/badge/macOS-14.0%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-6.1-orange)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
@@ -26,11 +26,23 @@ Since Logitech has discontinued support for the G13, there is no official driver
 
 ## Requirements
 
-- macOS 15.0 (Sequoia) or later
+- macOS 14.0 (Sonoma) or later
 - Logitech G13 Advanced Gameboard
 - Accessibility permission (required for key injection)
 
 ## Installation
+
+### Pre-built release
+
+1. Download `G13-v1.0.0-macos.zip` from the [Releases](https://github.com/golgote/G13/releases) page
+2. Unzip and drag `G13.app` to your Applications folder
+
+> **Note:** The app is not notarized. On first launch, macOS Gatekeeper will block it with a message saying the developer cannot be verified. To open it anyway:
+>
+> - **Option A** — Right-click (or Ctrl+click) `G13.app` → **Open** → **Open** in the confirmation dialog
+> - **Option B** — After the blocked launch attempt, go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the G13 message
+
+You only need to do this once. Subsequent launches will work normally.
 
 ### From source (Xcode)
 
@@ -41,10 +53,6 @@ Since Logitech has discontinued support for the G13, there is no official driver
 2. Open `G13.xcodeproj` in Xcode
 3. Build and run (Cmd+R)
 4. Grant Accessibility permission when prompted (System Settings → Privacy & Security → Accessibility)
-
-### Pre-built release
-
-Check the [Releases](https://github.com/golgote/G13/releases) page for pre-built binaries.
 
 ## Usage
 
@@ -147,4 +155,4 @@ Contributions are welcome! Feel free to open issues or pull requests.
 
 MIT License — see [LICENSE](LICENSE) for details.
 
-Copyright (c) 2025 Bertrand Mansion
+Copyright (c) 2026 Bertrand Mansion
