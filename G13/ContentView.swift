@@ -57,6 +57,13 @@ struct ContentView: View {
                 Text(statusMessage)
                     .font(.caption)
                     .foregroundColor(.secondary)
+                if captureTarget != nil {
+                    Button("Cancel") {
+                        captureTarget = nil
+                        statusMessage = ""
+                    }
+                    .controlSize(.small)
+                }
                 Spacer()
                 Button("Reset profile to defaults") {
                     profileManager.resetActiveProfile()
@@ -75,7 +82,7 @@ struct ContentView: View {
 
     private var captureHint: String {
         if let target = captureTarget {
-            return "Press a key to assign to \(target)... (Esc to cancel)"
+            return "Press a key to assign to \(target)..."
         }
         return "Click a key to remap it. Right-click to clear."
     }
@@ -591,11 +598,6 @@ struct ContentView: View {
     private func handleKeyCaptured(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
         guard let target = captureTarget else { return }
 
-        if keyCode == 0x35 {
-            captureTarget = nil
-            statusMessage = "Cancelled"
-            return
-        }
 
         var parts: [String] = []
         if modifiers.contains(.command) { parts.append("CMD") }
