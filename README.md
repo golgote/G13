@@ -20,9 +20,9 @@ Since Logitech has discontinued support for the G13, there is no official driver
 - **Menu bar app** — Lives in the menu bar, no Dock icon, minimal footprint
 - **Native macOS** — Pure Swift + IOKit + SwiftUI, no external dependencies
 
-## Screenshots
+## Screenshot
 
-*Coming soon*
+![G13 Settings](docs/screenshot.png)
 
 ## Requirements
 
