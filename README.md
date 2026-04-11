@@ -34,7 +34,7 @@ Since Logitech has discontinued support for the G13, there is no official driver
 
 ### Pre-built release
 
-1. Download `G13-v1.0.0-macos.zip` from the [Releases](https://github.com/golgote/G13/releases) page
+1. Download `G13-v1.1.0-macos.zip` from the [Releases](https://github.com/golgote/G13/releases) page
 2. Unzip and drag `G13.app` to your Applications folder
 
 > **Note:** The app is not notarized. On first launch, macOS Gatekeeper will block it with a message saying the developer cannot be verified. To open it anyway:
