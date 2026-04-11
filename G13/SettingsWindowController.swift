@@ -26,7 +26,7 @@ class SettingsWindowController {
         )
 
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 750, height: 660),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -35,6 +35,7 @@ class SettingsWindowController {
         newWindow.contentView = NSHostingView(rootView: contentView)
         newWindow.center()
         newWindow.isReleasedWhenClosed = false
+        newWindow.isRestorable = false
         newWindow.setFrameAutosaveName("G13Settings")
 
         self.window = newWindow

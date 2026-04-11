@@ -16,6 +16,11 @@ struct ContentView: View {
     @State private var showNewProfileSheet: Bool = false
     @State private var newProfileName: String = ""
 
+    private let sectionLabel: Font = .caption
+    private let sectionColor: Color = .secondary
+
+    private let rightColumnWidth: CGFloat = 200
+
     var body: some View {
         VStack(spacing: 12) {
             header
@@ -23,47 +28,89 @@ struct ContentView: View {
             profileBar
             Divider()
 
+            // Two-column layout
             HStack(alignment: .top, spacing: 16) {
-                // Left column: key layout + joystick config
-                VStack(alignment: .leading, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("G13 Keys")
-                            .font(.headline)
+
+                // Left column: all keys
+                VStack(spacing: 12) {
+                    // Capture hint
+                    HStack {
                         Text(captureHint)
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        keyboardLayout
-                            .padding(8)
-                            .background(Color(nsColor: .controlBackgroundColor))
-                            .cornerRadius(8)
-                        specialButtons
+                        Button("Cancel") {
+                            captureTarget = nil
+                            statusMessage = ""
+                        }
+                        .controlSize(.small)
+                        .tint(.red)
+                        .buttonStyle(.borderedProminent)
+                        .opacity(captureTarget != nil ? 1 : 0)
+                        .allowsHitTesting(captureTarget != nil)
+                        Spacer()
                     }
-                    joystickConfig
-                }
 
-                // Right column
-                VStack(spacing: 12) {
-                    backlightControls
-                    joystickLiveInfo
-                    accessibilityStatus
+                    // LCD buttons
+                    HStack(spacing: 5) {
+                        keyButton("BD"); keyButton("L1")
+                        keyButton("L2"); keyButton("L3")
+                        keyButton("L4")
+                    }
+
+                    // G1-G22 keyboard layout
+                    keyboardLayout
+                        .padding(8)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .cornerRadius(8)
+
+                    // Thumb buttons + Joystick
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Thumb buttons").font(sectionLabel).foregroundColor(sectionColor)
+                            VStack(spacing: 5) {
+                                keyButton("LEFT", displayLabel: "Left")
+                                keyButton("RIGHT", displayLabel: "Bottom")
+                            }
+                        }
+
+                        VStack(spacing: 4) {
+                            Text("Joystick").font(sectionLabel).foregroundColor(sectionColor)
+                            VStack(spacing: 3) {
+                                joystickDirButton("UP", label: "Up")
+                                HStack(spacing: 3) {
+                                    joystickDirButton("LEFT", label: "Left")
+                                    joystickClickButton()
+                                    joystickDirButton("RIGHT", label: "Right")
+                                }
+                                joystickDirButton("DOWN", label: "Down")
+                            }
+                        }
+
+                        joystickLiveInfo
+                        Spacer()
+                    }
+
                     Spacer()
                 }
-                .frame(width: 180)
-            }
 
-            Divider()
+                // Right column: accessibility, backlight
+                VStack(alignment: .leading, spacing: 20) {
+                    accessibilityStatus
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Backlight").font(sectionLabel).foregroundColor(sectionColor)
+                        backlightControls
+                    }
+
+                    Spacer()
+                }
+                .frame(width: rightColumnWidth)
+            }
 
             HStack {
                 Text(statusMessage)
                     .font(.caption)
                     .foregroundColor(.secondary)
-                if captureTarget != nil {
-                    Button("Cancel") {
-                        captureTarget = nil
-                        statusMessage = ""
-                    }
-                    .controlSize(.small)
-                }
                 Spacer()
                 Button("Reset profile to defaults") {
                     profileManager.resetActiveProfile()
@@ -73,7 +120,7 @@ struct ContentView: View {
             }
         }
         .padding()
-        .frame(width: 680, height: 700)
+        .frame(width: 750, height: 660)
         .background(KeyCaptureView(isCapturing: captureTarget != nil, onKeyCaptured: handleKeyCaptured))
         .sheet(isPresented: $showNewProfileSheet) {
             newProfileSheet
@@ -132,7 +179,6 @@ struct ContentView: View {
     private func profileTab(index: Int, profile: G13Profile) -> some View {
         let isActive = index == profileManager.activeProfileIndex
 
-        // Build the profile's backlight color for the tab
         let profileColor = Color(
             red: Double(profile.backlightR) / 255.0,
             green: Double(profile.backlightG) / 255.0,
@@ -145,13 +191,11 @@ struct ContentView: View {
             statusMessage = "Switched to \(profile.name)"
         }) {
             HStack(spacing: 4) {
-                // Color dot showing the profile's backlight color
                 Circle()
                     .fill(profileColor)
                     .frame(width: 8, height: 8)
                     .overlay(Circle().stroke(Color.primary.opacity(0.3), lineWidth: 0.5))
 
-                // M1/M2/M3 badge for the first 3 profiles
                 if index < 3 {
                     Text("M\(index + 1)")
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
@@ -245,7 +289,8 @@ struct ContentView: View {
     // MARK: - Accessibility status
 
     private var accessibilityStatus: some View {
-        GroupBox("Accessibility") {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Accessibility").font(sectionLabel).foregroundColor(sectionColor)
             if keyMapper.hasAccessibility {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
@@ -253,13 +298,13 @@ struct ContentView: View {
                     Text("Granted").font(.caption)
                 }
             } else {
-                VStack(spacing: 4) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.yellow)
                         Text("Required").font(.caption)
                     }
-                    Button("Grant access") {
+                    Button("Grant access...") {
                         keyMapper.checkAccessibility()
                     }
                     .controlSize(.small)
@@ -272,124 +317,68 @@ struct ContentView: View {
 
     private var keyboardLayout: some View {
         VStack(spacing: 5) {
-            // Row 1: G1-G7
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 keyButton("G1"); keyButton("G2"); keyButton("G3")
                 keyButton("G4"); keyButton("G5"); keyButton("G6"); keyButton("G7")
             }
-            // Row 2: G8-G14
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 keyButton("G8"); keyButton("G9"); keyButton("G10")
                 keyButton("G11"); keyButton("G12"); keyButton("G13"); keyButton("G14")
             }
-            // Row 3: G15-G19, centered
-            HStack(spacing: 4) {
-                keyButton("G15", width: 64); keyButton("G16"); keyButton("G17")
+            HStack(spacing: 5) {
+                keyButton("G15", width: 80); keyButton("G16"); keyButton("G17")
                 keyButton("G18"); keyButton("G19")
             }
-            // Row 4: G20-G22, centered
-            HStack(spacing: 4) {
-                keyButton("G20", width: 64); keyButton("G21", width: 56)
-                keyButton("G22", width: 96)
-            }
-        }
-    }
-
-    private var specialButtons: some View {
-        HStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("LCD buttons").font(.caption).foregroundColor(.secondary)
-                HStack(spacing: 4) {
-                    keyButton("BD", width: 40); keyButton("L1", width: 40)
-                    keyButton("L2", width: 40); keyButton("L3", width: 40)
-                    keyButton("L4", width: 40)
-                }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Thumb buttons").font(.caption).foregroundColor(.secondary)
-                HStack(spacing: 4) {
-                    keyButton("LEFT", width: 70, displayLabel: "Left")
-                    keyButton("RIGHT", width: 70, displayLabel: "Bottom")
-                }
+            HStack(spacing: 5) {
+                keyButton("G20", width: 80); keyButton("G21", width: 72)
+                keyButton("G22", width: 116)
             }
         }
     }
 
     // MARK: - Key button
 
-    private func keyButton(_ key: String, width: CGFloat = 52, displayLabel: String? = nil) -> some View {
+    private func keyButton(_ key: String, width: CGFloat = 66, displayLabel: String? = nil) -> some View {
         let isSelected = captureTarget == key && !captureIsJoystick
         let isPressed = device.pressedKeys.contains(key)
         let mapping = profileManager.keyMapping[key]
 
-        return VStack(spacing: 0) {
-            Button(action: {
-                selectTarget(key: key, isJoystick: false)
-            }) {
-                VStack(spacing: 2) {
-                    Text(displayLabel ?? key)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    Text(mapping?.displayName ?? "--")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-                .frame(width: width, height: 42)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isSelected ? Color.accentColor.opacity(0.3)
-                              : isPressed ? Color.orange.opacity(0.3)
-                              : Color(nsColor: .controlColor))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(isSelected ? Color.accentColor
-                                : isPressed ? Color.orange
-                                : Color.clear, lineWidth: 2)
-                )
+        return Button(action: {
+            selectTarget(key: key, isJoystick: false)
+        }) {
+            VStack(spacing: 2) {
+                Text(displayLabel ?? key)
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                Text(mapping?.displayName ?? "--")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Color.primary.opacity(0.7))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
             }
-            .buttonStyle(.plain)
-            .contextMenu {
-                Button("Clear mapping") {
-                    profileManager.clearKey(key)
-                    statusMessage = "\(key) mapping cleared"
-                }
+            .frame(width: width, height: 50)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.accentColor.opacity(0.3)
+                          : isPressed ? Color.orange.opacity(0.3)
+                          : Color(nsColor: .controlColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isSelected ? Color.accentColor
+                            : isPressed ? Color.orange
+                            : Color(nsColor: .controlColor), lineWidth: 2)
+            )
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Clear mapping") {
+                profileManager.clearKey(key)
+                statusMessage = "\(key) mapping cleared"
             }
         }
     }
 
-    // MARK: - Joystick config
-
-    private var joystickConfig: some View {
-        GroupBox("Joystick") {
-            HStack(spacing: 20) {
-                VStack(spacing: 2) {
-                    joystickDirButton("UP", label: "Up")
-                    HStack(spacing: 2) {
-                        joystickDirButton("LEFT", label: "Left")
-                        joystickClickButton()
-                        joystickDirButton("RIGHT", label: "Right")
-                    }
-                    joystickDirButton("DOWN", label: "Down")
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Click a direction,")
-                        .font(.caption).foregroundColor(.secondary)
-                    Text("then press the key")
-                        .font(.caption).foregroundColor(.secondary)
-                    Text("to assign.")
-                        .font(.caption).foregroundColor(.secondary)
-                    Spacer().frame(height: 8)
-                    Text("Default: WASD")
-                        .font(.caption2).foregroundColor(.secondary)
-                    Text("Right-click to clear.")
-                        .font(.caption2).foregroundColor(.secondary)
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
+    // MARK: - Joystick
 
     private func joystickClickButton() -> some View {
         let key = "STICK"
@@ -402,25 +391,25 @@ struct ContentView: View {
         }) {
             VStack(spacing: 2) {
                 Text("Click")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                 Text(mapping?.displayName ?? "--")
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Color.primary.opacity(0.7))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.6)
             }
-            .frame(width: 56, height: 38)
+            .frame(width: 60, height: 44)
             .background(
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: 6)
                     .fill(isSelected ? Color.accentColor.opacity(0.3)
                           : isPressed ? Color.orange.opacity(0.3)
                           : Color(nsColor: .controlColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: 6)
                     .stroke(isSelected ? Color.accentColor
                             : isPressed ? Color.orange
-                            : Color.clear, lineWidth: 2)
+                            : Color(nsColor: .controlColor), lineWidth: 2)
             )
         }
         .buttonStyle(.plain)
@@ -450,24 +439,24 @@ struct ContentView: View {
         }) {
             VStack(spacing: 2) {
                 Text(label)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                 Text(mapping?.displayName ?? "--")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .minimumScaleFactor(0.7)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Color.primary.opacity(0.7))
+                    .minimumScaleFactor(0.6)
             }
-            .frame(width: 56, height: 38)
+            .frame(width: 60, height: 44)
             .background(
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: 6)
                     .fill(isSelected ? Color.accentColor.opacity(0.3)
                           : isActive ? Color.orange.opacity(0.3)
                           : Color(nsColor: .controlColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: 6)
                     .stroke(isSelected ? Color.accentColor
                             : isActive ? Color.orange
-                            : Color.clear, lineWidth: 2)
+                            : Color(nsColor: .controlColor), lineWidth: 2)
             )
         }
         .buttonStyle(.plain)
@@ -482,38 +471,35 @@ struct ContentView: View {
     // MARK: - Backlight
 
     private var backlightControls: some View {
-        GroupBox("Backlight") {
-            VStack(spacing: 8) {
-                colorSlider("R", value: Binding(
-                    get: { Double(profileManager.backlightR) },
-                    set: { profileManager.backlightR = UInt8($0); applyBacklightLive() }
-                ), color: .red)
-                colorSlider("G", value: Binding(
-                    get: { Double(profileManager.backlightG) },
-                    set: { profileManager.backlightG = UInt8($0); applyBacklightLive() }
-                ), color: .green)
-                colorSlider("B", value: Binding(
-                    get: { Double(profileManager.backlightB) },
-                    set: { profileManager.backlightB = UInt8($0); applyBacklightLive() }
-                ), color: .blue)
+        VStack(spacing: 8) {
+            colorSlider("R", value: Binding(
+                get: { Double(profileManager.backlightR) },
+                set: { profileManager.backlightR = UInt8($0); applyBacklightLive() }
+            ), color: .red)
+            colorSlider("G", value: Binding(
+                get: { Double(profileManager.backlightG) },
+                set: { profileManager.backlightG = UInt8($0); applyBacklightLive() }
+            ), color: .green)
+            colorSlider("B", value: Binding(
+                get: { Double(profileManager.backlightB) },
+                set: { profileManager.backlightB = UInt8($0); applyBacklightLive() }
+            ), color: .blue)
 
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(
-                        red: Double(profileManager.backlightR) / 255,
-                        green: Double(profileManager.backlightG) / 255,
-                        blue: Double(profileManager.backlightB) / 255
-                    ))
-                    .frame(height: 20)
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.primary.opacity(0.2)))
-            }
-            .padding(.vertical, 4)
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color(
+                    red: Double(profileManager.backlightR) / 255,
+                    green: Double(profileManager.backlightG) / 255,
+                    blue: Double(profileManager.backlightB) / 255
+                ))
+                .frame(height: 20)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.primary.opacity(0.2)))
         }
     }
 
     private func colorSlider(_ label: String, value: Binding<Double>, color: Color) -> some View {
         HStack(spacing: 4) {
             Text(label).font(.caption).frame(width: 12)
-            Slider(value: value, in: 0...255, step: 1) { editing in
+            Slider(value: value, in: 0...255) { editing in
                 if !editing {
                     profileManager.save()
                 }
@@ -528,32 +514,61 @@ struct ContentView: View {
     // MARK: - Joystick live
 
     private var joystickLiveInfo: some View {
-        GroupBox("Joystick position") {
-            VStack(spacing: 4) {
-                HStack {
-                    Text("X: \(device.joystickX)")
-                    Spacer()
-                    Text("Y: \(device.joystickY)")
-                }
-                .font(.system(size: 11, design: .monospaced))
+        let size: CGFloat = 120
+        let radius = size / 2
+        // Normalize joystick position: 0-255 -> -1...1
+        let nx = (CGFloat(device.joystickX) - 128) / 128
+        let ny = (CGFloat(device.joystickY) - 128) / 128
+        // Deadzone radius as fraction of full range
+        let dzFraction = CGFloat(profileManager.joystickDeadzone) / 128
 
-                HStack {
-                    Text("Deadzone:").font(.caption)
-                    Slider(
-                        value: Binding(
-                            get: { Double(profileManager.joystickDeadzone) },
-                            set: { profileManager.joystickDeadzone = Int($0) }
-                        ),
-                        in: 5...80, step: 5
-                    ) { editing in
-                        if !editing { profileManager.save() }
-                    }
-                    Text("\(profileManager.joystickDeadzone)")
-                        .font(.system(size: 10, design: .monospaced))
-                        .frame(width: 24)
+        return VStack(spacing: 8) {
+            ZStack {
+                // Outer circle (full range)
+                Circle()
+                    .stroke(Color.primary.opacity(0.2), lineWidth: 1)
+                    .frame(width: size, height: size)
+
+                // Deadzone circle
+                Circle()
+                    .fill(Color.pink.opacity(0.15))
+                    .frame(width: size * dzFraction, height: size * dzFraction)
+
+                // Crosshair lines
+                Path { path in
+                    path.move(to: CGPoint(x: radius, y: 0))
+                    path.addLine(to: CGPoint(x: radius, y: size))
                 }
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                Path { path in
+                    path.move(to: CGPoint(x: 0, y: radius))
+                    path.addLine(to: CGPoint(x: size, y: radius))
+                }
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+
+                // Joystick cursor
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 8, height: 8)
+                    .offset(x: nx * radius, y: ny * radius)
             }
-            .padding(.vertical, 4)
+            .frame(width: size, height: size)
+
+            HStack {
+                Text("Deadzone:").font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(profileManager.joystickDeadzone) },
+                        set: { profileManager.joystickDeadzone = Int($0) }
+                    ),
+                    in: 5...80, step: 5
+                ) { editing in
+                    if !editing { profileManager.save() }
+                }
+                Text("\(profileManager.joystickDeadzone)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .frame(width: 24)
+            }
         }
     }
 
@@ -597,7 +612,6 @@ struct ContentView: View {
 
     private func handleKeyCaptured(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
         guard let target = captureTarget else { return }
-
 
         var parts: [String] = []
         if modifiers.contains(.command) { parts.append("CMD") }

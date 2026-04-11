@@ -84,12 +84,33 @@ class KeyMapper: ObservableObject {
         0x38, 0x3C, 0x3B, 0x3E, 0x3A, 0x3D, 0x37, 0x36, 0x39
     ]
 
+    private var accessibilityTimer: Timer?
+
     func checkAccessibility() {
         hasAccessibility = AXIsProcessTrusted()
         if !hasAccessibility {
             print("[KeyMapper] Accessibility permission required")
             let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
             AXIsProcessTrustedWithOptions(options)
+            startAccessibilityPolling()
+        }
+    }
+
+    func startAccessibilityPolling() {
+        guard accessibilityTimer == nil else { return }
+        accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let trusted = AXIsProcessTrusted()
+            if trusted != self.hasAccessibility {
+                DispatchQueue.main.async {
+                    self.hasAccessibility = trusted
+                    if trusted {
+                        print("[KeyMapper] Accessibility permission granted")
+                        timer.invalidate()
+                        self.accessibilityTimer = nil
+                    }
+                }
+            }
         }
     }
 

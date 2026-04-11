@@ -20,15 +20,11 @@ struct MenuBarView: View {
                 Text(device.isConnected ? "G13 connected" : "G13 disconnected")
             }
 
-            if keyMapper.hasAccessibility {
-                HStack {
-                    Circle().fill(Color.green).frame(width: 8, height: 8)
-                    Text("Key remapping active")
-                }
-            } else {
-                Button("Grant Accessibility...") {
-                    keyMapper.checkAccessibility()
-                }
+            HStack {
+                Circle()
+                    .fill(keyMapper.hasAccessibility ? Color.green : Color.red)
+                    .frame(width: 8, height: 8)
+                Text(keyMapper.hasAccessibility ? "Key remapping active" : "Accessibility required")
             }
 
             Divider()
