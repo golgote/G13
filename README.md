@@ -1,158 +1,76 @@
-# G13
+# G13 Studio
 
-A native macOS menu bar app for the **Logitech G13 Advanced Gameboard**.
+G13 Studio is a native macOS menu bar app for the Logitech G13 gameboard. It is built on [Bertrand Mansion's original G13 project](https://github.com/golgote/G13). Thank you to Bertrand for making a modern macOS G13 driver available as open source. The original MIT [LICENSE](LICENSE) and copyright notice are retained.
 
-Since Logitech has discontinued support for the G13, there is no official driver for modern macOS. G13 fills that gap — it's a lightweight, open-source Swift app that gives you full control of your G13 directly from the menu bar.
+This contribution expands the original key mapper into a profile editor for application shortcuts, including workflows in Avid Pro Tools. It uses SwiftUI, AppKit, IOKit HID, and CoreGraphics, with no third-party packages, network communication, or telemetry.
 
-![macOS](https://img.shields.io/badge/macOS-14.0%2B-blue)
-![Swift](https://img.shields.io/badge/Swift-6.1-orange)
-![License](https://img.shields.io/badge/License-MIT-green)
+## Screenshots
 
-## Features
+### Main screen — dark mode
 
-- **Key remapping** — Map any of the 22 G-keys, thumb buttons, joystick click, and LCD buttons to any keyboard key or combination (Cmd+C, Ctrl+Shift+S, etc.)
-- **Joystick as keys** — Configure joystick directions to send keyboard inputs (WASD by default), with adjustable deadzone
-- **Multiple profiles** — Create profiles for different games or applications, switch instantly with M1/M2/M3 buttons
-- **RGB backlight control** — Set any color for the key and LCD backlight, saved per profile
-- **LCD display** — Shows the active profile name on the 160×43 monochrome screen
-- **M-key LEDs** — Automatically lights the LED matching the active profile
-- **Auto-reconnect** — Plug/unplug freely, the app reconnects automatically
-- **Menu bar app** — Lives in the menu bar, no Dock icon, minimal footprint
-- **Native macOS** — Pure Swift + IOKit + SwiftUI, no external dependencies
+![G13 Studio main screen showing the keypad, Pro Tools profile, commands, and Safe Test](docs/main_screen_dark.png)
 
-## Screenshot
+### Settings — light mode
 
-![G13 Settings](docs/screenshot.png)
+![G13 Studio settings showing keypad display options and help](docs/settings_screen_light.png)
 
-## Requirements
+### PDF key map preview
 
-- macOS 14.0 (Sonoma) or later
-- Logitech G13 Advanced Gameboard
-- Accessibility permission (required for key injection)
+![G13 Studio PDF key map preview showing the Pro Tools M1 layer](docs/pdf_view.png)
 
-## Installation
+## What this contribution adds
 
-### Pre-built release
+- A keypad diagram with larger G-key tiles, thumb buttons, joystick directions, selected-control editing, hover descriptions, and right-click assignment menus.
+- A universal **Default (All Apps)** profile plus application-specific profiles. Profiles can activate when their application comes to the front, be duplicated, renamed, deleted with confirmation, and backed up or restored. The editor can remain on a selected profile while output follows the frontmost application.
+- **M1, M2, and M3 as three layers within each profile**, rather than the first three profiles. Each layer keeps its key assignments, key images, joystick mode, and backlight color.
+- Named **Keystroke** and **Multi Key** commands with an in-app shortcut recorder, searchable command list, application-scoped folders, and drag-and-drop assignment to controls or movement between folders.
+- A starter library of Pro Tools shortcuts and symbols. Check every shortcut against your Pro Tools version and keyboard layout before using it in a session.
+- Built-in and imported PNG/JPEG icons for commands and keys. Settings can show any combination of icon, control label, and assignment. Assignment text can show a command name such as **Undo** or its actual keys such as **CMD+Z**. Keys without icons show text in Icons only mode.
+- G13 LCD pages for Overview, a selectable profile list, and approximate CPU/RAM usage. With **Use default display controls** checked, BD cycles pages; L1/L2 navigate profiles and L3 saves the startup profile on the Profiles page. Uncheck it to use saved BD/L shortcuts. The assignments are preserved while display controls are active.
+- Joystick key mode or vertical, horizontal, or both-axis scrolling. In single-axis scroll modes, the other axis can still send keys. Scrolling directions are dimmed in the editor, and vertical and horizontal speeds are separate per profile.
+- **Safe Test**, enabled at each launch, previews actions without sending synthetic keys or scrolling. Held keys and scrolling are released on disconnect, profile changes, and output pause. Warnings flag unassigned keys and potentially destructive assignments.
+- Portrait or landscape PDF key maps for all three layers of a profile.
 
-1. Download `G13-v1.1.0-macos.zip` from the [Releases](https://github.com/golgote/G13/releases) page
-2. Unzip and drag `G13.app` to your Applications folder
+## Requirements and build
 
-> **Note:** The app is not notarized. On first launch, macOS Gatekeeper will block it with a message saying the developer cannot be verified. To open it anyway:
->
-> - **Option A** — Right-click (or Ctrl+click) `G13.app` → **Open** → **Open** in the confirmation dialog
-> - **Option B** — After the blocked launch attempt, go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the G13 message
+- macOS 14.6 or later, full Xcode, and a Logitech G13 for hardware input and LCD/backlight output.
+- macOS Accessibility permission is needed only to send assigned keystrokes and scrolling. Choose **Request Access** in Settings when ready. Safe Test needs no Accessibility grant.
 
-You only need to do this once. Subsequent launches will work normally.
+Open `G13.xcodeproj`, select the **G13** scheme, and choose **Product → Build** (Cmd-B). The app appears as **G13 Studio**. The project has no required Apple developer team; a distributing organization can apply its own signing and notarization. This source and the locally shared app are not notarized.
 
-### From source (Xcode)
+The bundle identifier remains `com.openg13.G13` so existing profiles in the current Mac account can be read. Quit an older running G13 build before replacing it. Profiles and commands are saved locally for the Mac account; imported icons are stored in Application Support. G13 onboard profile storage is not supported.
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/golgote/G13.git
-   ```
-2. Open `G13.xcodeproj` in Xcode
-3. Build and run (Cmd+R)
-4. Grant Accessibility permission when prompted (System Settings → Privacy & Security → Accessibility)
+## Getting started
 
-## Usage
+1. Build and open G13 Studio. Leave **Safe Test** on while checking your mappings.
+2. Create or select a profile. **Default (All Apps)** supplies output when the frontmost app has no matching profile. Bind an application profile to an installed app to enable automatic activation; choose its **Auto-switch** setting as needed.
+3. Press M1, M2, or M3 to edit that profile's layer. Click a control and press a shortcut, choose a named command, or drag a command from the Commands list. Use the color controls to set the layer backlight.
+4. Use **+** in Commands to record one Keystroke or a Multi Key sequence. The physical MR button opens the same command editor with Multi Key selected. Commands in **All Apps** are available to every profile; application commands appear in their matching profile.
+5. In Settings, choose which details appear on the keypad and whether assignment text uses command names or keystrokes. Choose joystick mode and, for scrolling, the applicable axis speeds.
+6. When ready for live output, request Accessibility access in Settings and turn Safe Test off. Start with a disposable document or Pro Tools session.
 
-### First launch
+Opening the editor pauses live output so shortcuts do not enter the editor. Safe Test previews the selected profile there. Away from the editor, the status row identifies the output profile. A manually selected unbound profile can supply output in any application until the frontmost app changes.
 
-1. Plug in your G13
-2. Launch the app — a gamepad icon appears in the menu bar
-3. Grant Accessibility permission when prompted
-4. The G13 backlight turns on and the default WASD gaming profile is loaded
+## Screen and controls
 
-### Remapping keys
+**Use default display controls** is beside G13 Keys and starts checked. BD cycles Overview, Profiles, and CPU/RAM. Overview shows the output profile and M layer. Profiles shows a list with up, down, and lock icons above L1–L3. L1/L2 cycle profiles; L3 saves the startup choice. L4 has no LCD action. The L buttons have no LCD action on Overview or CPU/RAM. While checked, BD/L tiles and assignment editors are dimmed and disabled; unchecking restores their saved shortcuts.
 
-1. Click the menu bar icon → **Settings...**
-2. Click any G-key button in the settings window
-3. Press the key (or key combination) you want to assign
-4. The mapping is saved automatically
+The joystick's deadzone sets how far it moves before a key or scroll action begins. Vertical scroll reserves Up/Down and leaves Left/Right programmable; horizontal scroll does the reverse; both-axis scroll reserves all four directions. Thumb buttons and stick click remain independently programmable. Centering the stick, disconnecting the device, or changing profiles stops scrolling.
 
-To clear a mapping, right-click a key and select "Clear mapping".
+## Safety and architecture
 
-### Profiles
+The app matches the G13 by USB vendor ID `0x046D` and product ID `0xC21C` through `IOHIDManager`. Eight-byte input reports carry keys and joystick position. HID output and feature reports update the 160×43 LCD, RGB backlight, and M-key LEDs. `CGEvent` sends assigned macOS keyboard and scroll events after Accessibility permission is granted. No kernel extension, administrator privilege, external service, or shell command is required at runtime.
 
-- **M1/M2/M3** buttons on the G13 switch between the first 3 profiles
-- Create new profiles with the **+** button in the settings window
-- Right-click a profile tab to rename, duplicate, or delete it
-- Each profile stores its own key mapping, joystick config, and backlight color
+The USB input buffer remains owned until callbacks are unregistered. The mapper tracks key-down actions so key-up uses the same mapping, even if a profile changes. The `tests/` directory contains focused checks for key release, macro cancellation, profile persistence, backup/restore, shortcut capture, display pages, drag payloads, icons, and PDF layout. These checks complement testing with a physical G13 and the target application.
 
-### Joystick
+## Contributing upstream
 
-The joystick sends configurable key presses for each direction (default: WASD). Click a direction in the joystick section of settings, then press the desired key.
+Fork [golgote/G13](https://github.com/golgote/G13), create a feature branch from the current upstream default branch, copy this source into the fork's repository root, commit, push, and open a pull request. The pull request should describe the behavior, tests, and any remaining hardware limitations. Do not include built `.app` bundles, local profiles, or Xcode `xcuserdata` in the pull request.
 
-Adjust the deadzone slider to control how far you need to push the stick before it registers.
+## Credits and license
 
-## How it works
+Thank you to **Bertrand Mansion ([@golgote](https://github.com/golgote))** for the original G13 macOS project and for welcoming contributions. The original project credits [tewhalen/g13slop](https://github.com/tewhalen/g13slop), [ecraven/g13](https://github.com/ecraven/g13), [bjanders/g13](https://github.com/bjanders/g13), and [jtgans/g13gui](https://github.com/jtgans/g13gui) for USB protocol work.
 
-G13 communicates directly with the Logitech G13 hardware over USB HID using Apple's IOKit framework:
+The G13 Studio features were designed, directed, and tested by **[@chrisclick](https://github.com/chrisclick)**. The implementation was developed with **OpenAI Codex** under that direction and review.
 
-- **IOHIDManager** detects the device (Vendor ID `0x046D`, Product ID `0xC21C`) and monitors for plug/unplug events
-- **Input reports** (8 bytes) are decoded to identify key presses and joystick position
-- **Output reports** (992 bytes) send framebuffer data to the 160×43 LCD
-- **Feature reports** control the RGB backlight (Report ID `0x07`) and M-key LEDs (Report ID `0x05`)
-- **CGEvent** (CoreGraphics) injects keyboard events into macOS, requiring Accessibility permission
-
-No kernel extensions, no third-party libraries, no elevated privileges.
-
-## USB Protocol Reference
-
-The G13 communicates via USB Full Speed (12 Mb/s):
-
-| Direction | Endpoint | Size | Content |
-|-----------|----------|------|---------|
-| IN | 1 | 8 bytes | Key state + joystick position |
-| OUT | 2 | 992 bytes | LCD framebuffer (32 header + 960 image) |
-
-**Input report format:**
-```
-[0] Always 0x01
-[1] Joystick X (0-255, ~127 at center)
-[2] Joystick Y (0-255, ~127 at center)
-[3] Keys: G1-G8 (bit 0 = G1)
-[4] Keys: G9-G16
-[5] Keys: G17-G22, light state
-[6] Keys: BD, L1-L4, M1-M3
-[7] Keys: MR, LEFT, RIGHT, STICK, light controls
-```
-
-## Project structure
-
-```
-G13/
-├── G13App.swift                 — App entry point (menu bar)
-├── G13Device.swift              — USB/HID communication, auto-reconnect
-├── G13LCD.swift                 — LCD framebuffer + 5×7 bitmap font
-├── KeyMapper.swift              — Key remapping + CGEvent injection
-├── ProfileManager.swift         — Multi-profile preferences (UserDefaults)
-├── ContentView.swift            — Settings window (SwiftUI)
-├── MenuBarView.swift            — Menu bar drop-down
-└── SettingsWindowController.swift — AppKit window management
-```
-
-## Acknowledgments
-
-This project was inspired by and references the USB protocol work from:
-
-- [tewhalen/g13slop](https://github.com/tewhalen/g13slop) — Python G13 driver for macOS
-- [ecraven/g13](https://github.com/ecraven/g13) — C++ libusb driver for Linux
-- [bjanders/g13](https://github.com/bjanders/g13) — Go library with protocol documentation
-- [jtgans/g13gui](https://github.com/jtgans/g13gui) — Python GUI driver for Linux
-
-## Contributing
-
-Contributions are welcome! Feel free to open issues or pull requests.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/my-feature`)
-3. Commit your changes (`git commit -am 'Add my feature'`)
-4. Push to the branch (`git push origin feature/my-feature`)
-5. Open a Pull Request
-
-## License
-
-MIT License — see [LICENSE](LICENSE) for details.
-
-Copyright (c) 2026 Bertrand Mansion
+Distributed under the MIT [LICENSE](LICENSE). Copyright (c) 2026 Bertrand Mansion for the original project.

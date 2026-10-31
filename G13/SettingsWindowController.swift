@@ -1,47 +1,36 @@
-// =============================================================
-//  SettingsWindowController.swift
-//  Manages the settings window via AppKit (like Clipy does)
-// =============================================================
-
 import SwiftUI
 
-class SettingsWindowController {
-
+final class SettingsWindowController {
     static let shared = SettingsWindowController()
-
     private var window: NSWindow?
 
-    func show(device: G13Device, keyMapper: KeyMapper, profileManager: ProfileManager) {
-        if let existing = window {
-            existing.makeKeyAndOrderFront(nil)
-            existing.orderFrontRegardless()
+    func show(runtime: G13Runtime, openRecorder: Bool = false) {
+        if let window {
+            window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-            return
+        } else {
+            let newWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1080, height: 715),
+                styleMask: [.titled, .closable, .miniaturizable],
+                backing: .buffered, defer: false
+            )
+            newWindow.title = "G13 Studio"
+            newWindow.contentView = NSHostingView(rootView: StudioView(runtime: runtime))
+            newWindow.center()
+            newWindow.isReleasedWhenClosed = false
+            newWindow.isRestorable = false
+            window = newWindow
+            newWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
         }
-
-        let contentView = ContentView(
-            device: device,
-            keyMapper: keyMapper,
-            profileManager: profileManager
-        )
-
-        let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 750, height: 660),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        newWindow.title = "G13 Settings"
-        newWindow.contentView = NSHostingView(rootView: contentView)
-        newWindow.center()
-        newWindow.isReleasedWhenClosed = false
-        newWindow.isRestorable = false
-        newWindow.setFrameAutosaveName("G13Settings")
-
-        self.window = newWindow
-
-        newWindow.makeKeyAndOrderFront(nil)
-        newWindow.orderFrontRegardless()
-        NSApp.activate(ignoringOtherApps: true)
+        if openRecorder {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .g13OpenRecorder, object: nil)
+            }
+        }
     }
+}
+
+extension Notification.Name {
+    static let g13OpenRecorder = Notification.Name("g13OpenRecorder")
 }

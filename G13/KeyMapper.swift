@@ -5,6 +5,7 @@
 
 import Foundation
 import Combine
+import AppKit
 import CoreGraphics
 import ApplicationServices
 
@@ -33,7 +34,9 @@ struct KeyAction: Codable, Equatable {
             case "CTRL", "CONTROL":                  control = true
             case "ALT", "OPTION":                    option = true
             case "CMD", "COMMAND":                   command = true
-            default:                                 mainKey = part
+            default:
+                guard mainKey == nil else { return nil }
+                mainKey = part
             }
         }
 
@@ -81,19 +84,58 @@ class KeyMapper: ObservableObject {
     @Published var joyRight = false
 
     private static let modifierKeycodes: Set<UInt16> = [
-        0x38, 0x3C, 0x3B, 0x3E, 0x3A, 0x3D, 0x37, 0x36, 0x39
+        0x38, 0x3C, 0x3B, 0x3E, 0x3A, 0x3D, 0x37, 0x36
     ]
 
     private var accessibilityTimer: Timer?
+    private var terminationObserver: NSObjectProtocol?
+    // Keep the action from key-down so changes to a profile cannot change its key-up.
+    private var pressedSources: [String: KeyAction] = [:]
+    // The most recently pressed source owns a shared macOS keycode. Switching
+    // owners sends a balanced key-up/key-down pair, including changed modifiers.
+    private var pressedOrder: [String] = []
+    private var sequenceTasks: [String: Task<Void, Never>] = [:]
+    private var sequenceTokens: [String: UUID] = [:]
+    private var scrollTimer: Timer?
+    private var scrollX: UInt8 = 128
+    private var scrollY: UInt8 = 128
+    private var scrollDeadzone = 20
+    private var verticalScrollSpeed = 2
+    private var horizontalScrollSpeed = 2
+    private var scrollVertical = true
+    private var scrollHorizontal = false
+    var scrollSink: ((Int32, Int32) -> Void)?
+    private let eventSink: ((UInt16, Bool, CGEventFlags) -> Void)?
 
-    func checkAccessibility() {
-        hasAccessibility = AXIsProcessTrusted()
-        if !hasAccessibility {
+    init(eventSink: ((UInt16, Bool, CGEventFlags) -> Void)? = nil) {
+        self.eventSink = eventSink
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.releaseAllKeys()
+        }
+    }
+
+    deinit {
+        accessibilityTimer?.invalidate()
+        scrollTimer?.invalidate()
+        if let terminationObserver {
+            NotificationCenter.default.removeObserver(terminationObserver)
+        }
+    }
+
+    func checkAccessibility(prompt: Bool = false) {
+        let trusted = AXIsProcessTrusted()
+        if !trusted && hasAccessibility { releaseAllKeys() }
+        hasAccessibility = trusted
+        if !trusted && prompt {
             print("[KeyMapper] Accessibility permission required")
             let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
             AXIsProcessTrustedWithOptions(options)
-            startAccessibilityPolling()
         }
+        startAccessibilityPolling()
     }
 
     func startAccessibilityPolling() {
@@ -102,98 +144,251 @@ class KeyMapper: ObservableObject {
             guard let self else { timer.invalidate(); return }
             let trusted = AXIsProcessTrusted()
             if trusted != self.hasAccessibility {
-                DispatchQueue.main.async {
-                    self.hasAccessibility = trusted
-                    if trusted {
-                        print("[KeyMapper] Accessibility permission granted")
-                        timer.invalidate()
-                        self.accessibilityTimer = nil
-                    }
-                }
+                if !trusted { self.releaseAllKeys() }
+                self.hasAccessibility = trusted
+                print("[KeyMapper] Accessibility permission \(trusted ? "granted" : "revoked")")
             }
         }
     }
 
     // Handle a G13 key press/release. If the key has no mapping, it is ignored.
     func handleKey(name: String, isPressed: Bool, mapping: [String: KeyAction]) {
-        guard hasAccessibility else { return }
-        guard let action = mapping[name] else { return }
-
-        if KeyMapper.modifierKeycodes.contains(action.keycode)
-            && !action.shift && !action.control && !action.option && !action.command {
-            sendModifierEvent(keycode: action.keycode, keyDown: isPressed)
-        } else {
-            sendKeyEvent(action: action, keyDown: isPressed)
-        }
+        guard !isPressed || hasAccessibility else { return }
+        updateSource("key:\(name)", isPressed: isPressed, action: mapping[name])
     }
 
     // Handle joystick as configurable key directions.
     // Each direction (UP/DOWN/LEFT/RIGHT) can be mapped independently.
     // Diagonals are handled by combining two directions simultaneously.
     // If a direction has no mapping, it is ignored.
-    func handleJoystickArrows(x: UInt8, y: UInt8, deadzone: Int, mapping: [String: KeyAction]) {
+    func handleJoystickArrows(x: UInt8, y: UInt8, deadzone: Int, mapping: [String: KeyAction],
+                              vertical: Bool = true, horizontal: Bool = true) {
         guard hasAccessibility else { return }
         let center = 128
 
-        let newUp    = Int(y) < (center - deadzone)
-        let newDown  = Int(y) > (center + deadzone)
-        let newLeft  = Int(x) < (center - deadzone)
-        let newRight = Int(x) > (center + deadzone)
+        let newUp    = vertical && Int(y) < (center - deadzone)
+        let newDown  = vertical && Int(y) > (center + deadzone)
+        let newLeft  = horizontal && Int(x) < (center - deadzone)
+        let newRight = horizontal && Int(x) > (center + deadzone)
 
         if newUp != joyUp {
             joyUp = newUp
-            if let action = mapping["UP"] { sendKeyEvent(action: action, keyDown: newUp) }
+            updateSource("joy:UP", isPressed: newUp, action: mapping["UP"])
         }
         if newDown != joyDown {
             joyDown = newDown
-            if let action = mapping["DOWN"] { sendKeyEvent(action: action, keyDown: newDown) }
+            updateSource("joy:DOWN", isPressed: newDown, action: mapping["DOWN"])
         }
         if newLeft != joyLeft {
             joyLeft = newLeft
-            if let action = mapping["LEFT"] { sendKeyEvent(action: action, keyDown: newLeft) }
+            updateSource("joy:LEFT", isPressed: newLeft, action: mapping["LEFT"])
         }
         if newRight != joyRight {
             joyRight = newRight
-            if let action = mapping["RIGHT"] { sendKeyEvent(action: action, keyDown: newRight) }
+            updateSource("joy:RIGHT", isPressed: newRight, action: mapping["RIGHT"])
         }
+    }
+
+    // Hold the stick to scroll continuously. Centering it or releasing all
+    // input stops the timer, including on disconnect and profile changes.
+    func handleJoystickScroll(x: UInt8, y: UInt8, deadzone: Int,
+                              verticalSpeed: Int, horizontalSpeed: Int,
+                              vertical: Bool, horizontal: Bool) {
+        guard hasAccessibility else { stopScroll(); return }
+        scrollX = x
+        scrollY = y
+        scrollDeadzone = min(max(deadzone, 0), 127)
+        verticalScrollSpeed = min(max(verticalSpeed, 1), 5)
+        horizontalScrollSpeed = min(max(horizontalSpeed, 1), 5)
+        scrollVertical = vertical
+        scrollHorizontal = horizontal
+        let upDown = vertical ? Self.scrollAmount(axis: 128 - Int(y),
+                                                  deadzone: scrollDeadzone, speed: verticalScrollSpeed) : 0
+        let side = horizontal ? Self.scrollAmount(axis: Int(x) - 128,
+                                                  deadzone: scrollDeadzone, speed: horizontalScrollSpeed) : 0
+        if upDown == 0 && side == 0 {
+            stopScroll()
+        } else if scrollTimer == nil {
+            scrollTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+                self?.scrollTick()
+            }
+        }
+    }
+
+    static func scrollAmount(axis: Int, deadzone: Int, speed: Int) -> Int32 {
+        let excess = abs(axis) - min(max(deadzone, 0), 127)
+        guard excess > 0 else { return 0 }
+        let lines = min(4, 1 + excess * (min(max(speed, 1), 5) - 1) / 160)
+        return Int32(axis > 0 ? lines : -lines)
+    }
+
+    private func scrollTick() {
+        guard hasAccessibility else { stopScroll(); return }
+        let vertical = scrollVertical ? Self.scrollAmount(axis: 128 - Int(scrollY),
+                                                          deadzone: scrollDeadzone, speed: verticalScrollSpeed) : 0
+        let side = scrollHorizontal ? Self.scrollAmount(axis: Int(scrollX) - 128,
+                                                        deadzone: scrollDeadzone, speed: horizontalScrollSpeed) : 0
+        guard vertical != 0 || side != 0 else { stopScroll(); return }
+        if let scrollSink {
+            scrollSink(vertical, side)
+        } else if let event = CGEvent(scrollWheelEvent2Source: nil, units: .line,
+                                     wheelCount: 2, wheel1: vertical,
+                                     wheel2: side, wheel3: 0) {
+            event.post(tap: .cghidEventTap)
+        }
+    }
+
+    private func stopScroll() {
+        scrollTimer?.invalidate()
+        scrollTimer = nil
+        scrollX = 128
+        scrollY = 128
+    }
+
+    // Release ordinary keys before modifiers so shortcuts cannot linger after
+    // disconnects, profile edits, permission changes, or normal termination.
+    func releaseAllKeys() {
+        stopScroll()
+        for task in sequenceTasks.values { task.cancel() }
+        sequenceTasks.removeAll()
+        sequenceTokens.removeAll()
+        let active = Set(pressedSources.values.map(\.keycode))
+            .compactMap { activeAction(for: $0) }
+            .sorted { lhs, rhs in
+                let lhsModifier = isStandaloneModifier(lhs)
+                let rhsModifier = isStandaloneModifier(rhs)
+                return lhsModifier == rhsModifier ? lhs.keycode < rhs.keycode : !lhsModifier
+            }
+        for action in active {
+            pressedSources = pressedSources.filter { $0.value.keycode != action.keycode }
+            pressedOrder.removeAll { source in pressedSources[source] == nil }
+            post(action: action, keyDown: false)
+        }
+        pressedSources.removeAll()
+        pressedOrder.removeAll()
+        joyUp = false
+        joyDown = false
+        joyLeft = false
+        joyRight = false
+    }
+
+    // A sequence is a finite series of key taps. Cancellation occurs on profile
+    // changes, disconnects, permission loss, and termination.
+    func playSequence(source: String, steps: [String], delayMilliseconds: Int) {
+        guard hasAccessibility, !steps.isEmpty, steps.count <= 16,
+              steps.allSatisfy({ KeyAction.parse($0) != nil }) else { return }
+        sequenceTasks[source]?.cancel()
+        let token = UUID()
+        sequenceTokens[source] = token
+        let delay = UInt64(min(max(delayMilliseconds, 25), 1000)) * 1_000_000
+        sequenceTasks[source] = Task { @MainActor [weak self] in
+            for step in steps {
+                guard !Task.isCancelled, let self, let action = KeyAction.parse(step) else { break }
+                self.post(action: action, keyDown: true)
+                self.post(action: action, keyDown: false)
+                try? await Task.sleep(nanoseconds: delay)
+            }
+            // A canceled predecessor must never remove its replacement task.
+            if self?.sequenceTokens[source] == token {
+                self?.sequenceTasks.removeValue(forKey: source)
+                self?.sequenceTokens.removeValue(forKey: source)
+            }
+        }
+    }
+
+    private func activeAction(for keycode: UInt16) -> KeyAction? {
+        for source in pressedOrder.reversed() {
+            if let action = pressedSources[source], action.keycode == keycode { return action }
+        }
+        return nil
+    }
+
+    private func updateSource(_ source: String, isPressed: Bool, action: KeyAction?) {
+        if isPressed {
+            guard let action, pressedSources[source] == nil else { return }
+            let previous = activeAction(for: action.keycode)
+            pressedSources[source] = action
+            pressedOrder.append(source)
+            if previous != action {
+                if let previous { post(action: previous, keyDown: false) }
+                post(action: action, keyDown: true)
+            }
+        } else {
+            guard let heldAction = pressedSources[source] else { return }
+            let previous = activeAction(for: heldAction.keycode)
+            pressedSources.removeValue(forKey: source)
+            pressedOrder.removeAll { $0 == source }
+            let replacement = activeAction(for: heldAction.keycode)
+            if previous != replacement {
+                if let previous { post(action: previous, keyDown: false) }
+                if let replacement { post(action: replacement, keyDown: true) }
+            }
+        }
+    }
+
+    private func isStandaloneModifier(_ action: KeyAction) -> Bool {
+        Self.modifierKeycodes.contains(action.keycode)
+            && !action.shift && !action.control && !action.option && !action.command
+    }
+
+    private func post(action: KeyAction, keyDown: Bool) {
+        if isStandaloneModifier(action) {
+            sendModifierEvent(keycode: action.keycode, keyDown: keyDown)
+        } else {
+            sendKeyEvent(action: action, keyDown: keyDown)
+        }
+    }
+
+    private func activeStandaloneModifierFlags() -> CGEventFlags {
+        var flags: CGEventFlags = []
+        for action in pressedSources.values where isStandaloneModifier(action) {
+            switch action.keycode {
+            case 0x38, 0x3C: flags.insert(.maskShift)
+            case 0x3B, 0x3E: flags.insert(.maskControl)
+            case 0x3A, 0x3D: flags.insert(.maskAlternate)
+            case 0x37, 0x36: flags.insert(.maskCommand)
+            default: break
+            }
+        }
+        return flags
     }
 
     // MARK: - CGEvent injection
 
     private func sendKeyEvent(action: KeyAction, keyDown: Bool) {
+        var flags = activeStandaloneModifierFlags()
+        if action.shift   { flags.insert(.maskShift) }
+        if action.control { flags.insert(.maskControl) }
+        if action.option  { flags.insert(.maskAlternate) }
+        if action.command { flags.insert(.maskCommand) }
+        if let eventSink {
+            eventSink(action.keycode, keyDown, flags)
+            return
+        }
+
         guard let event = CGEvent(
             keyboardEventSource: nil,
             virtualKey: CGKeyCode(action.keycode),
             keyDown: keyDown
         ) else { return }
-
-        var flags: CGEventFlags = []
-        if action.shift   { flags.insert(.maskShift) }
-        if action.control { flags.insert(.maskControl) }
-        if action.option  { flags.insert(.maskAlternate) }
-        if action.command { flags.insert(.maskCommand) }
-        if !flags.isEmpty { event.flags = flags }
+        event.flags = flags
 
         event.post(tap: .cghidEventTap)
     }
 
     private func sendModifierEvent(keycode: UInt16, keyDown: Bool) {
+        let flags = activeStandaloneModifierFlags()
+        if let eventSink {
+            eventSink(keycode, keyDown, flags)
+            return
+        }
+
         guard let event = CGEvent(
             keyboardEventSource: nil,
             virtualKey: CGKeyCode(keycode),
             keyDown: keyDown
         ) else { return }
 
-        var flags: CGEventFlags = []
-        if keyDown {
-            switch keycode {
-            case 0x38, 0x3C: flags = .maskShift
-            case 0x3B, 0x3E: flags = .maskControl
-            case 0x3A, 0x3D: flags = .maskAlternate
-            case 0x37, 0x36: flags = .maskCommand
-            default: break
-            }
-        }
         event.flags = flags
         event.post(tap: .cghidEventTap)
     }
@@ -221,8 +416,11 @@ class KeyMapper: ObservableObject {
         "F1": 0x7A, "F2": 0x78, "F3": 0x63, "F4": 0x76,
         "F5": 0x60, "F6": 0x61, "F7": 0x62, "F8": 0x64,
         "F9": 0x65, "F10": 0x6D, "F11": 0x67, "F12": 0x6F,
+        "NUMPAD3": 0x56, "KP3": 0x56,
+        "NUMPADPLUS": 0x45, "NUMPADMINUS": 0x4E,
         "MINUS": 0x1B, "EQUAL": 0x18,
         "LEFTBRACKET": 0x21, "RIGHTBRACKET": 0x1E,
+        "[": 0x21, "]": 0x1E,
         "BACKSLASH": 0x2A, "SEMICOLON": 0x29, "QUOTE": 0x27,
         "COMMA": 0x2B, "PERIOD": 0x2F, "DOT": 0x2F,
         "SLASH": 0x2C, "GRAVE": 0x32,

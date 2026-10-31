@@ -23,7 +23,9 @@ class G13Device: ObservableObject {
     // -- Internal references --
     private var manager: IOHIDManager?
     private var device: IOHIDDevice?
-    private var reportBuffer = [UInt8](repeating: 0, count: 8)
+    private static let inputReportLength = 8
+    // IOKit retains this pointer until the input callback is unregistered.
+    private var reportBuffer: UnsafeMutablePointer<UInt8>?
     private var previousReport = Data(count: 8)
     private var isFirstReport = true
 
@@ -38,6 +40,10 @@ class G13Device: ObservableObject {
 
     // Called when the device disconnects
     var onDeviceDisconnected: (() -> Void)?
+
+    deinit {
+        stopMonitoring()
+    }
 
     // Key names ordered by bit position in bytes 3-7 of the input report
     static let keyNames: [String] = [
@@ -80,6 +86,7 @@ class G13Device: ObservableObject {
         let openResult = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         if openResult != kIOReturnSuccess {
             print("[G13Device] Failed to open HID Manager: \(String(format: "0x%08X", openResult))")
+            stopMonitoring()
         } else {
             print("[G13Device] Monitoring for G13 connections...")
         }
@@ -89,6 +96,9 @@ class G13Device: ObservableObject {
     func stopMonitoring() {
         detachDevice()
         if let manager = manager {
+            IOHIDManagerRegisterDeviceMatchingCallback(manager, nil, nil)
+            IOHIDManagerRegisterDeviceRemovalCallback(manager, nil, nil)
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
             IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         }
         manager = nil
@@ -124,8 +134,11 @@ class G13Device: ObservableObject {
 
         // Register input report callback
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Self.inputReportLength)
+        buffer.initialize(repeating: 0, count: Self.inputReportLength)
+        reportBuffer = buffer
         IOHIDDeviceRegisterInputReportCallback(
-            newDevice, &reportBuffer, reportBuffer.count,
+            newDevice, buffer, Self.inputReportLength,
             g13InputReportCallback, selfPtr
         )
         IOHIDDeviceScheduleWithRunLoop(
@@ -134,23 +147,32 @@ class G13Device: ObservableObject {
 
         // Notify the app so it can re-apply profile settings
         DispatchQueue.main.async { [weak self] in
-            self?.onDeviceConnected?()
+            guard let self, self.isConnected else { return }
+            self.onDeviceConnected?()
         }
     }
 
-    fileprivate func detachDevice() {
+    fileprivate func detachDevice(_ removedDevice: IOHIDDevice? = nil) {
         guard let dev = device else { return }
+        if let removedDevice, !CFEqual(dev, removedDevice) { return }
 
+        if let buffer = reportBuffer {
+            IOHIDDeviceRegisterInputReportCallback(dev, buffer, Self.inputReportLength, nil, nil)
+        }
         IOHIDDeviceUnscheduleFromRunLoop(dev, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        reportBuffer?.deinitialize(count: Self.inputReportLength)
+        reportBuffer?.deallocate()
+        reportBuffer = nil
 
         device = nil
         isConnected = false
         pressedKeys = []
+        joystickX = 127
+        joystickY = 127
         print("[G13Device] G13 disconnected")
 
-        DispatchQueue.main.async { [weak self] in
-            self?.onDeviceDisconnected?()
-        }
+        // Release synthetic keys before a replacement device can report input.
+        onDeviceDisconnected?()
     }
 
     // MARK: - Commands
@@ -180,7 +202,7 @@ class G13Device: ObservableObject {
     // MARK: - Input report processing
 
     fileprivate func processInputReport(_ data: Data) {
-        guard data.count >= 8 else { return }
+        guard data.count == Self.inputReportLength, data[0] == 0x01 else { return }
 
         if isFirstReport {
             previousReport = data
@@ -244,7 +266,7 @@ private func g13DeviceRemovedCallback(
 ) {
     guard let context = context else { return }
     let g13 = Unmanaged<G13Device>.fromOpaque(context).takeUnretainedValue()
-    g13.detachDevice()
+    g13.detachDevice(device)
 }
 
 // Called for each input report from the G13
@@ -257,7 +279,11 @@ private func g13InputReportCallback(
     report: UnsafeMutablePointer<UInt8>,
     reportLength: CFIndex
 ) {
-    guard let context = context else { return }
+    guard result == kIOReturnSuccess,
+          type == kIOHIDReportTypeInput,
+          reportLength == 8,
+          report[0] == 0x01,
+          let context = context else { return }
     let g13 = Unmanaged<G13Device>.fromOpaque(context).takeUnretainedValue()
     g13.processInputReport(Data(bytes: report, count: reportLength))
 }

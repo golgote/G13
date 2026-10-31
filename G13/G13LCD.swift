@@ -5,6 +5,35 @@
 
 import Foundation
 
+enum G13DisplayPage: Int, CaseIterable {
+    case overview, profiles, system
+
+    var next: G13DisplayPage {
+        G13DisplayPage(rawValue: (rawValue + 1) % Self.allCases.count) ?? .overview
+    }
+
+    var title: String {
+        switch self {
+        case .overview: return "Overview"
+        case .profiles: return "Profiles"
+        case .system: return "CPU + RAM"
+        }
+    }
+}
+
+enum G13LCDLayout {
+    static func profileRows(names: [String], activeIndex: Int, startupIndex: Int?) -> [String] {
+        guard !names.isEmpty else { return [] }
+        let selected = min(max(activeIndex, 0), names.count - 1)
+        let first = max(0, min(selected - 1, names.count - 3))
+        return (first..<min(first + 3, names.count)).map { index in
+            let cursor = index == selected ? ">" : " "
+            let startup = index == startupIndex ? "*" : " "
+            return "\(cursor)\(startup)\(index + 1) \(names[index])"
+        }
+    }
+}
+
 // Framebuffer for the G13 monochrome LCD (160x43 pixels).
 //
 // Memory layout:
@@ -62,6 +91,31 @@ class G13LCD {
         for d in -size...size { setPixel(x: x + d, y: y); setPixel(x: x, y: y + d) }
     }
 
+    // The three LCD soft-key hints sit above physical L1, L2, and L3.
+    // L4 intentionally has no display function.
+    func drawProfileSoftKeys() {
+        // Up arrow over L1.
+        setPixel(x: 20, y: 36)
+        for x in 19...21 { setPixel(x: x, y: 37) }
+        for x in 18...22 { setPixel(x: x, y: 38) }
+        for y in 39...41 { setPixel(x: 20, y: y) }
+
+        // Down arrow over L2.
+        for y in 36...38 { setPixel(x: 60, y: y) }
+        for x in 58...62 { setPixel(x: x, y: 39) }
+        for x in 59...61 { setPixel(x: x, y: 40) }
+        setPixel(x: 60, y: 41)
+
+        // Lock over L3: shackle and solid body.
+        for x in 97...103 { setPixel(x: x, y: 38) }
+        for y in 36...38 {
+            setPixel(x: 97, y: y)
+            setPixel(x: 103, y: y)
+        }
+        fillRect(x: 96, y: 39, width: 9, height: 3)
+        setPixel(x: 100, y: 40, on: false)
+    }
+
     // Draw text using the built-in 5x7 font.
     // Each character is 6 pixels wide (5 glyph + 1 spacing).
     // Max 26 chars per line, 5 lines on screen.
@@ -84,6 +138,9 @@ class G13LCD {
     // 5x7 bitmap font. Each character is 5 bytes (columns), 7 bits per column (bit 0 = top).
     static let font5x7: [Character: [UInt8]] = [
         " ": [0x00, 0x00, 0x00, 0x00, 0x00], "!": [0x00, 0x00, 0x5F, 0x00, 0x00],
+        "%": [0x63, 0x13, 0x08, 0x64, 0x63], "<": [0x08, 0x14, 0x22, 0x41, 0x00],
+        "*": [0x14, 0x08, 0x3E, 0x08, 0x14],
+        "^": [0x04, 0x02, 0x01, 0x02, 0x04], "?": [0x02, 0x01, 0x51, 0x09, 0x06],
         ".": [0x00, 0x60, 0x60, 0x00, 0x00], ",": [0x00, 0x50, 0x30, 0x00, 0x00],
         ":": [0x00, 0x36, 0x36, 0x00, 0x00], "/": [0x20, 0x10, 0x08, 0x04, 0x02],
         "(": [0x00, 0x1C, 0x22, 0x41, 0x00], ")": [0x00, 0x41, 0x22, 0x1C, 0x00],
