@@ -84,6 +84,10 @@ class KeyMapper: ObservableObject {
         0x38, 0x3C, 0x3B, 0x3E, 0x3A, 0x3D, 0x37, 0x36, 0x39
     ]
 
+    // Modifiers held on the G13 must be included in subsequent synthetic key events.
+    // Keep their state independently of the mapping of the next G13 key.
+    private var pressedModifierKeycodes: Set<UInt16> = []
+
     private var accessibilityTimer: Timer?
 
     func checkAccessibility() {
@@ -119,12 +123,7 @@ class KeyMapper: ObservableObject {
         guard hasAccessibility else { return }
         guard let action = mapping[name] else { return }
 
-        if KeyMapper.modifierKeycodes.contains(action.keycode)
-            && !action.shift && !action.control && !action.option && !action.command {
-            sendModifierEvent(keycode: action.keycode, keyDown: isPressed)
-        } else {
-            sendKeyEvent(action: action, keyDown: isPressed)
-        }
+        sendAction(action, keyDown: isPressed)
     }
 
     // Handle joystick as configurable key directions.
@@ -142,23 +141,49 @@ class KeyMapper: ObservableObject {
 
         if newUp != joyUp {
             joyUp = newUp
-            if let action = mapping["UP"] { sendKeyEvent(action: action, keyDown: newUp) }
+            if let action = mapping["UP"] { sendAction(action, keyDown: newUp) }
         }
         if newDown != joyDown {
             joyDown = newDown
-            if let action = mapping["DOWN"] { sendKeyEvent(action: action, keyDown: newDown) }
+            if let action = mapping["DOWN"] { sendAction(action, keyDown: newDown) }
         }
         if newLeft != joyLeft {
             joyLeft = newLeft
-            if let action = mapping["LEFT"] { sendKeyEvent(action: action, keyDown: newLeft) }
+            if let action = mapping["LEFT"] { sendAction(action, keyDown: newLeft) }
         }
         if newRight != joyRight {
             joyRight = newRight
-            if let action = mapping["RIGHT"] { sendKeyEvent(action: action, keyDown: newRight) }
+            if let action = mapping["RIGHT"] { sendAction(action, keyDown: newRight) }
         }
     }
 
     // MARK: - CGEvent injection
+
+    private func sendAction(_ action: KeyAction, keyDown: Bool) {
+        if KeyMapper.modifierKeycodes.contains(action.keycode)
+            && !action.shift && !action.control && !action.option && !action.command
+            && action.keycode != 0x39 { // Caps Lock needs separate handling.
+            sendModifierEvent(keycode: action.keycode, keyDown: keyDown)
+        } else {
+            sendKeyEvent(action: action, keyDown: keyDown)
+        }
+    }
+
+    private static func modifierFlag(for keycode: UInt16) -> CGEventFlags {
+        switch keycode {
+        case 0x38, 0x3C: return .maskShift
+        case 0x3B, 0x3E: return .maskControl
+        case 0x3A, 0x3D: return .maskAlternate
+        case 0x37, 0x36: return .maskCommand
+        default: return []
+        }
+    }
+
+    private var heldModifierFlags: CGEventFlags {
+        pressedModifierKeycodes.reduce(into: CGEventFlags()) { flags, keycode in
+            flags.formUnion(Self.modifierFlag(for: keycode))
+        }
+    }
 
     private func sendKeyEvent(action: KeyAction, keyDown: Bool) {
         guard let event = CGEvent(
@@ -167,34 +192,33 @@ class KeyMapper: ObservableObject {
             keyDown: keyDown
         ) else { return }
 
-        var flags: CGEventFlags = []
+        var flags = heldModifierFlags
         if action.shift   { flags.insert(.maskShift) }
         if action.control { flags.insert(.maskControl) }
         if action.option  { flags.insert(.maskAlternate) }
         if action.command { flags.insert(.maskCommand) }
-        if !flags.isEmpty { event.flags = flags }
+        event.flags = flags
 
         event.post(tap: .cghidEventTap)
     }
 
     private func sendModifierEvent(keycode: UInt16, keyDown: Bool) {
+        if keyDown {
+            pressedModifierKeycodes.insert(keycode)
+        } else {
+            pressedModifierKeycodes.remove(keycode)
+        }
+
         guard let event = CGEvent(
             keyboardEventSource: nil,
             virtualKey: CGKeyCode(keycode),
             keyDown: keyDown
         ) else { return }
 
-        var flags: CGEventFlags = []
-        if keyDown {
-            switch keycode {
-            case 0x38, 0x3C: flags = .maskShift
-            case 0x3B, 0x3E: flags = .maskControl
-            case 0x3A, 0x3D: flags = .maskAlternate
-            case 0x37, 0x36: flags = .maskCommand
-            default: break
-            }
-        }
-        event.flags = flags
+        // macOS represents modifier state changes as flagsChanged events,
+        // not ordinary keyDown/keyUp events.
+        event.type = .flagsChanged
+        event.flags = heldModifierFlags
         event.post(tap: .cghidEventTap)
     }
 
