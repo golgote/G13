@@ -264,6 +264,23 @@ struct StudioProfileTests {
         assert(refined.commands.first { $0.name == "Zoom In" }?.iconReference == "sf:plus.magnifyingglass")
         assert(refined.commands.first { $0.name == "Save Session As" }?.iconReference == "sf:star")
         assert(ProfileManager(defaults: iconDefaults).commands.count == 2)
+        let colorSuite = "G13IconColorTests." + UUID().uuidString
+        guard let colorDefaults = UserDefaults(suiteName: colorSuite) else { fatalError("No test defaults") }
+        defer { colorDefaults.removePersistentDomain(forName: colorSuite) }
+        let colored = ProfileManager(defaults: colorDefaults)
+        var timed = G13Command(name: "Option Hold", kind: .keystroke, steps: ["ALT"])
+        timed.holdMilliseconds = 1300
+        timed.iconColor = "teal"
+        colored.saveCommand(timed)
+        colored.setKey("G8", to: timed.assignment)
+        colored.setIconColor("purple", for: "G8", isJoystick: false)
+        let colorReloaded = ProfileManager(defaults: colorDefaults)
+        assert(colorReloaded.commands.first { $0.id == timed.id }?.holdMilliseconds == 1300)
+        assert(colorReloaded.commands.first { $0.id == timed.id }?.iconColor == "teal")
+        assert(colorReloaded.iconColor(for: "G8", isJoystick: false) == "purple")
+        colorReloaded.clearAllIconColorOverrides()
+        assert(colorReloaded.iconColor(for: "G8", isJoystick: false) == nil)
+        assert(colorReloaded.commands.first { $0.id == timed.id }?.iconColor == nil)
         print("Studio profile tests passed")
     }
 }

@@ -113,9 +113,8 @@ struct G13ProfileBackup: Codable {
         }
         for command in commands {
             guard !command.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  command.name.count <= 200, (1...16).contains(command.steps.count),
-                  (25...1000).contains(command.delayMilliseconds),
-                  command.steps.allSatisfy({ KeyAction.parse($0) != nil }) else {
+                  command.name.count <= 200, command.isValidAction,
+                  (25...1000).contains(command.delayMilliseconds) else {
                 throw G13BackupError.invalidLibrary("A named command contains an invalid shortcut.")
             }
         }

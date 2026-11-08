@@ -9,7 +9,9 @@ struct StudioView: View {
     @ObservedObject var profiles: ProfileManager
     @State private var selectedKey = "G1"
     @State private var selectedIsJoystick = false
+    @State private var hasSelectedControl = false
     @State private var editingCommand: G13Command?
+    @State private var assignEditedCommandToSelectedControl = false
     @State private var showNewProfile = false
     @State private var newProfileName = ""
     @State private var showRename = false
@@ -30,6 +32,12 @@ struct StudioView: View {
     @State private var folderNameError: String?
     @State private var folderMoveError: String?
     @State private var collapsedFolderIDs: Set<UUID> = []
+    @State private var collapsedScopeIDs: Set<String> = []
+    @State private var collapsedUnfiledScopeIDs: Set<String> = []
+    @State private var showNamedCommandPicker = false
+    @State private var namedCommandSearch = ""
+    @FocusState private var namedCommandSearchFocused: Bool
+    @AppStorage("studioCommandSort") private var commandSort = "name"
     @AppStorage("studioLightMode") private var lightMode = false
     @AppStorage("studioIconsOnly") private var legacyIconsOnly = false
     @AppStorage("studioDisplayMigratedV13") private var displayMigrated = false
@@ -37,6 +45,7 @@ struct StudioView: View {
     @AppStorage("studioShowControlLabels") private var showControlLabels = true
     @AppStorage("studioShowAssignments") private var showAssignments = true
     @AppStorage("studioShowShortcutText") private var showShortcutText = false
+    @AppStorage("studioDefaultIconColor") private var defaultIconColor = "automatic"
 
     private let cyan = Color(red: 0.0, green: 0.76, blue: 0.88)
     private var accent: Color { lightMode ? Color(red: 0, green: 0.38, blue: 0.55) : cyan }
@@ -75,14 +84,22 @@ struct StudioView: View {
         .frame(width: 1080, height: 715)
         .preferredColorScheme(lightMode ? .light : .dark)
         .onAppear(perform: migrateDisplaySettings)
+        .onChange(of: profiles.activeProfileIndex) { _, _ in hasSelectedControl = false }
+        .onChange(of: profiles.activeLayer) { _, _ in hasSelectedControl = false }
         .background(lightMode ? Color(red: 0.96, green: 0.98, blue: 0.99) :
                     Color(red: 0.045, green: 0.07, blue: 0.09))
-        .sheet(item: $editingCommand) { command in
+        .sheet(item: $editingCommand, onDismiss: {
+            assignEditedCommandToSelectedControl = false
+        }) { command in
             CommandEditor(command: command,
                           profiles: profiles,
                           appBundleID: profiles.activeProfile?.applicationBundleID,
                           appName: profiles.activeProfile?.applicationDisplayName ?? profiles.activeProfileName) { updated in
                 profiles.saveCommand(updated)
+                if assignEditedCommandToSelectedControl && hasSelectedControl {
+                    _ = profiles.assignVisibleCommand(updated.assignment, to: selectedKey,
+                                                      isJoystick: selectedIsJoystick)
+                }
             }
         }
         .alert("New profile", isPresented: $showNewProfile) {
@@ -251,6 +268,17 @@ struct StudioView: View {
                     showAssignments = true
                 }
             }
+            HStack {
+                Picker("Shared icon color", selection: $defaultIconColor) {
+                    ForEach(G13IconColor.allCases, id: \.rawValue) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                Button("Apply to all") { profiles.clearAllIconColorOverrides() }
+                    .help("Use the shared color for every command and key icon")
+            }
+            Text("Automatic is black in Light mode and white in Dark mode. Choose a color for an individual command or key in its editor. Original keeps imported image colors.")
+                .font(.caption).foregroundStyle(.secondary)
             Divider()
             HStack {
                 Label(mapper.hasAccessibility ? "Accessibility enabled" : "Accessibility needed for output",
@@ -272,11 +300,14 @@ struct StudioView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     helpItem("Profiles", "Default is the universal output profile. When Pro Tools is frontmost, its matching profile supplies keys. In other apps without a matching profile, Default supplies keys even if you leave Pro Tools selected in this editor. The editor shows your selected profile for configuration. Selecting a manual, unbound profile uses it for output in any app. Opening this editor pauses output. Auto-switch selects an application profile when that app becomes frontmost.")
                     helpItem("M1, M2, M3", "These are three independent key layers within a profile. Each layer remembers its assignments, key images, joystick mode, and backlight color.")
-                    helpItem("Assign a shortcut", "Click a control on the diagram, then press a complete shortcut such as Cmd+Opt+W. The Selected Control field highlights while ready. Press Escape to cancel. You can also click the field or use Type… for manual entry.")
+                    helpItem("Assign a shortcut", "Click a control on the diagram, then press a complete shortcut such as Cmd+Opt+W. The Selected Control field highlights while ready. Press Escape to cancel. You can also click the field or use Type… for manual entry. Click the selected control again, or use the X in Selected Control, to clear the selection.")
+                    helpItem("Hold modifiers while clicking", "Assign SHIFT, ALT, or a chord such as ALT+SHIFT to one control, then hold it while pressing a control assigned Left Click or Right Click. For a modifier-only chord, use Type… in Selected Control or type it in the Command editor; the recorder waits for a non-modifier key. Mouse clicks carry the held modifiers. Keep Safe Test off and the editor closed when checking live output.")
                     helpItem("Clear or replace a key", "Right-click a control for Record shortcut, Assign command, or Clear assignment. Drag a named command from the Commands list onto a control to assign it. Clearing or replacing an assignment also resets that key's image override, so the new command image appears.")
-                    helpItem("Commands and folders", "Use + in Commands and choose Keystroke for one chord or Multi Key for up to 16 steps in the same editor. All Apps commands work in every profile; application commands appear only in that app profile. Drag a command onto another folder in the same scope to move it. To change between All Apps and an application, edit Available in. Search by name or shortcut. Deleting a folder moves its commands to Unfiled. The recorder captures only while its editor is open.")
+                    helpItem("Commands and folders", "Use + in Commands and choose Keystroke for one chord, Multi Key for up to 16 steps, or Mouse for clicks at the current pointer position. Mouse commands can include Shift, Control, Option, or Command, such as Shift + Left Click. All Apps commands work in every profile; application commands appear only in that app profile. The scope, Unfiled, and named folders can all be collapsed. Sort by name or date added, and type in Choose command to filter assignments. Drag a command onto another folder in the same scope to move it. To change between All Apps and an application, edit Available in. Deleting a folder moves its commands to Unfiled.")
+                    helpItem("Timed hold", "In a Keystroke command, enable Hold key for a set time and choose 0.1–30 seconds. Assign the command to a G13 button. For a direct shortcut, select its button and choose Make timed hold command. Disconnecting or changing profiles releases the key immediately.")
                     helpItem("Icons and printout", "Choose a built-in symbol or import a PNG/JPEG image for a command or key. Imported artwork is centered in a standard square. A key image overrides its command image. In Icons only mode, controls without an icon show their command text. Hover over a control to see its full assignment. Save PDF produces portrait or landscape pages for all three layers of the selected profile.")
-                    helpItem("Safe Test and permissions", "Safe Test starts on and previews G13 actions without sending keystrokes or scrolling to macOS. Turn it off only when ready to use the device. Accessibility permission is required for output; use Request Access above if needed.")
+                    helpItem("Icon colors", "Settings has a shared icon color. Automatic appears black in Light mode and white in Dark mode. Choose an icon color in a command editor or Selected Control to override it. Apply to all clears those overrides. Original keeps the colors in imported artwork.")
+                    helpItem("Safe Test and permissions", "G13 Studio starts ready for live output. Turn on Safe Test to preview G13 actions without sending keystrokes, clicks, or scrolling to macOS. Accessibility permission is required for output; use Request Access above if needed.")
                     helpItem("Joystick", "Choose Keys, Vertical scroll, Horizontal scroll, or Both axes scroll per layer. Vertical scroll uses Up/Down for scrolling and leaves Left/Right as keys; Horizontal scroll does the reverse. Both axes scroll uses all four directions. Scrolling directions are dimmed but their saved key assignments return in Keys mode. Vertical and horizontal speeds are separate for each profile. Centering the stick, disconnecting, or switching profiles stops scrolling.")
                     helpItem("Backup and device storage", "The archive icon beside Profiles saves profiles, commands, layer settings, and custom images to a local JSON file. Restore replaces the current library after confirmation. Settings are saved in this Mac account; saving them to G13 onboard memory is not supported.")
                     helpItem("LCD pages and startup profile", "Check Use default display controls beside G13 Keys to reserve BD and L1–L4 for the screen. Their tiles and assignment editors are disabled while checked. BD cycles Overview, Profiles, then combined CPU/RAM. Overview shows the output profile and M layer. Profiles shows a scrolling list, with up, down, and lock icons over L1–L3; those buttons change or save the startup profile only on this page. CPU/RAM shows two live usage bars. The L buttons have no LCD action on Overview or CPU/RAM, and L4 has no LCD action. Uncheck the box to use saved BD/L shortcuts. These readings are approximate; game statistics need a game-specific source.")
@@ -324,6 +355,13 @@ struct StudioView: View {
             TextField("Search commands or shortcuts", text: $commandSearch)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Search commands")
+            Picker("Sort commands", selection: $commandSort) {
+                Text("Name A–Z").tag("name")
+                Text("Name Z–A").tag("nameDescending")
+                Text("Date added").tag("added")
+            }
+            .pickerStyle(.menu)
+            .font(.caption)
             GeometryReader { viewport in
                 ScrollView([.vertical, .horizontal], showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -357,7 +395,9 @@ struct StudioView: View {
     private var commandListIdentity: String {
         let profileID = profiles.activeProfile?.id.uuidString ?? "none"
         let folderState = collapsedFolderIDs.map(\.uuidString).sorted().joined(separator: ",")
-        return "\(profileID)|\(folderState)|\(commandSearch)"
+        let scopeState = collapsedScopeIDs.sorted().joined(separator: ",")
+        let unfiledState = collapsedUnfiledScopeIDs.sorted().joined(separator: ",")
+        return "\(profileID)|\(folderState)|\(scopeState)|\(unfiledState)|\(commandSearch)|\(commandSort)"
     }
 
     private var commandListWidth: CGFloat {
@@ -381,15 +421,26 @@ struct StudioView: View {
     private var visibleCommands: [G13Command] {
         let query = commandSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         let commands = profiles.commandsVisibleInActiveProfile()
-        guard !query.isEmpty else { return commands }
-        return commands.filter { command in
+        guard !query.isEmpty else { return sortedCommands(commands) }
+        return sortedCommands(commands.filter { command in
             let folderName = command.folderID.flatMap { id in
                 profiles.commandFolders.first(where: { $0.id == id })?.name
             }
             return command.name.localizedCaseInsensitiveContains(query) ||
                 command.steps.contains(where: { $0.localizedCaseInsensitiveContains(query) }) ||
                 (folderName?.localizedCaseInsensitiveContains(query) ?? false) ||
-                (command.kind == .multiKey ? "multi key macro" : "keystroke").localizedCaseInsensitiveContains(query)
+                (command.kind == .multiKey ? "multi key macro" :
+                 command.kind == .mouseFunction ? "mouse left right middle double click" : "keystroke")
+                    .localizedCaseInsensitiveContains(query)
+        })
+    }
+
+    private func sortedCommands(_ commands: [G13Command]) -> [G13Command] {
+        guard commandSort != "added" else { return commands }
+        return commands.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            if order == .orderedSame { return $0.id.uuidString < $1.id.uuidString }
+            return commandSort == "nameDescending" ? order == .orderedDescending : order == .orderedAscending
         }
     }
 
@@ -397,21 +448,38 @@ struct StudioView: View {
     private func commandScopeSection(_ title: String, bundleID: String?) -> some View {
         let scoped = visibleCommands.filter { $0.applicationBundleID?.lowercased() == bundleID?.lowercased() }
         let folders = profiles.folders(for: bundleID)
+        let scopeID = bundleID?.lowercased() ?? "all-apps"
         if !scoped.isEmpty || (commandSearch.isEmpty && !folders.isEmpty) {
-            Text(title).font(.caption.bold()).foregroundStyle(.secondary).padding(.top, 5)
+            DisclosureGroup(isExpanded: Binding(
+                get: { !collapsedScopeIDs.contains(scopeID) || !commandSearch.isEmpty },
+                set: { expanded in
+                    if expanded { collapsedScopeIDs.remove(scopeID) }
+                    else { collapsedScopeIDs.insert(scopeID) }
+                }
+            )) {
             let unfiled = scoped.filter { command in
                 command.folderID == nil || !folders.contains(where: { $0.id == command.folderID })
             }
             if !unfiled.isEmpty {
-                if !folders.isEmpty { Text("Unfiled").font(.caption2.bold()).foregroundStyle(.secondary) }
-                ForEach(unfiled) { command in commandRow(command) }
+                DisclosureGroup(isExpanded: Binding(
+                    get: { !collapsedUnfiledScopeIDs.contains(scopeID) || !commandSearch.isEmpty },
+                    set: { expanded in
+                        if expanded { collapsedUnfiledScopeIDs.remove(scopeID) }
+                        else { collapsedUnfiledScopeIDs.insert(scopeID) }
+                    }
+                )) {
+                    ForEach(unfiled) { command in commandRow(command) }
+                } label: {
+                    Label("Unfiled (\(unfiled.count))", systemImage: "tray")
+                        .font(.caption.bold())
+                }
             }
             ForEach(folders) { folder in
                 let items = scoped.filter { $0.folderID == folder.id }
                 if !items.isEmpty || commandSearch.isEmpty {
                     let folderTarget = "folder:\(folder.id.uuidString)"
                     DisclosureGroup(isExpanded: Binding(
-                        get: { !collapsedFolderIDs.contains(folder.id) },
+                        get: { !collapsedFolderIDs.contains(folder.id) || !commandSearch.isEmpty },
                         set: { expanded in
                             if expanded { collapsedFolderIDs.remove(folder.id) }
                             else { collapsedFolderIDs.insert(folder.id) }
@@ -441,6 +509,12 @@ struct StudioView: View {
                     }
                 }
             }
+            } label: {
+                Label("\(title) (\(scoped.count))", systemImage: bundleID == nil ? "globe" : "app")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: commandListWidth, alignment: .leading)
         }
     }
 
@@ -471,12 +545,13 @@ struct StudioView: View {
                 .contentShape(Rectangle())
                 .onDrag { NSItemProvider(object: command.assignment as NSString) }
                 .help("Drag to a G13 key")
-            G13IconView(reference: command.iconReference).frame(width: 24, height: 24)
+            G13IconView(reference: command.iconReference, colorOverride: command.iconColor)
+                .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 4) {
                 Text(command.name).fontWeight(.medium)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
-                Text(command.kind == .keystroke ? (command.steps.first ?? "No key") : "\(command.steps.count) steps")
+                Text(command.actionDescription)
                     .font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
@@ -489,7 +564,7 @@ struct StudioView: View {
         .onTapGesture { editingCommand = command }
         .contextMenu {
             Button("Assign to \(selectedKey)") { setAssignment(command.assignment) }
-                .disabled(selectedControlIsReserved || (selectedIsJoystick && command.kind == .multiKey))
+                .disabled(selectedControlIsReserved || (selectedIsJoystick && command.kind != .keystroke))
             Button("Edit") { editingCommand = command }
             Button("Delete", role: .destructive) { profiles.deleteCommand(command) }
         }
@@ -556,6 +631,7 @@ struct StudioView: View {
             try backup.restore(into: profiles)
             selectedKey = "G1"
             selectedIsJoystick = false
+            hasSelectedControl = false
         } catch { libraryError = error.localizedDescription }
     }
 
@@ -917,21 +993,20 @@ struct StudioView: View {
         let icon = effectiveIcon(for: name, isJoystick: false)
         let target = "key:\(name)"
         return Button {
-            selectedKey = name
-            selectedIsJoystick = false
-            shortcutFocusRequest += 1
+            selectControl(name, isJoystick: false)
         } label: {
             controlFace(label: displayLabel ?? name, icon: icon,
+                        iconColor: effectiveIconColor(for: name, isJoystick: false),
                         assignment: displayAssignmentName(for: name),
                         tileHeight: height)
             .frame(width: width, height: height)
             .contentShape(RoundedRectangle(cornerRadius: 7))
             .background(reserved ? Color.gray.opacity(0.12) :
                         dropTarget == target ? .green.opacity(0.28) :
-                        selectedKey == name && !selectedIsJoystick ? accent.opacity(0.25) :
+                        hasSelectedControl && selectedKey == name && !selectedIsJoystick ? accent.opacity(0.25) :
                         device.pressedKeys.contains(name) ? .orange.opacity(0.25) : tileFill)
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(dropTarget == target ? .green :
-                     selectedKey == name && !selectedIsJoystick ? accent : .gray.opacity(0.3),
+                     hasSelectedControl && selectedKey == name && !selectedIsJoystick ? accent : .gray.opacity(0.3),
                      lineWidth: dropTarget == target ? 2 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 7))
         }
@@ -942,12 +1017,10 @@ struct StudioView: View {
         .contextMenu {
             if !reserved {
                 Button("Record shortcut") {
-                    selectedKey = name
-                    selectedIsJoystick = false
-                    shortcutFocusRequest += 1
+                    selectControl(name, isJoystick: false, toggle: false)
                 }
                 Menu("Assign named command") {
-                    ForEach(profiles.commandsVisibleInActiveProfile()) { command in
+                    ForEach(sortedCommands(profiles.commandsVisibleInActiveProfile())) { command in
                         Button(command.name) {
                             _ = profiles.assignVisibleCommand(command.assignment, to: name,
                                                               isJoystick: false)
@@ -957,6 +1030,7 @@ struct StudioView: View {
                 Button("Clear assignment", role: .destructive) {
                     selectedKey = name
                     selectedIsJoystick = false
+                    hasSelectedControl = true
                     profiles.clearKey(name)
                 }
             }
@@ -981,11 +1055,10 @@ struct StudioView: View {
             }
         }()
         return Button {
-            selectedKey = direction
-            selectedIsJoystick = true
-            if profiles.activeJoystickMode == .keys { shortcutFocusRequest += 1 }
+            selectControl(direction, isJoystick: true)
         } label: {
             controlFace(label: label, icon: icon,
+                        iconColor: effectiveIconColor(for: direction, isJoystick: true),
                         assignment: scrolls ? joystickScrollLabel(direction) :
                             assignmentText(for: direction, isJoystick: true),
                         tileHeight: 36)
@@ -993,10 +1066,10 @@ struct StudioView: View {
             .contentShape(RoundedRectangle(cornerRadius: 7))
             .background(scrolls ? Color.gray.opacity(0.12) :
                         dropTarget == target ? .green.opacity(0.28) :
-                        selectedKey == direction && selectedIsJoystick ? accent.opacity(0.25) :
+                        hasSelectedControl && selectedKey == direction && selectedIsJoystick ? accent.opacity(0.25) :
                         active ? .orange.opacity(0.25) : tileFill)
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(dropTarget == target ? .green :
-                     selectedKey == direction && selectedIsJoystick ? accent : .gray.opacity(0.3),
+                     hasSelectedControl && selectedKey == direction && selectedIsJoystick ? accent : .gray.opacity(0.3),
                      lineWidth: dropTarget == target ? 2 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 7))
         }
@@ -1007,12 +1080,10 @@ struct StudioView: View {
         .contextMenu {
             if !scrolls {
                 Button("Record shortcut") {
-                    selectedKey = direction
-                    selectedIsJoystick = true
-                    shortcutFocusRequest += 1
+                    selectControl(direction, isJoystick: true, toggle: false)
                 }
                 Menu("Assign named command") {
-                    ForEach(profiles.commandsVisibleInActiveProfile().filter { $0.kind == .keystroke }) { command in
+                    ForEach(sortedCommands(profiles.commandsVisibleInActiveProfile().filter { $0.kind == .keystroke })) { command in
                         Button(command.name) {
                             _ = profiles.assignVisibleCommand(command.assignment, to: direction,
                                                               isJoystick: true)
@@ -1022,6 +1093,7 @@ struct StudioView: View {
                 Button("Clear assignment", role: .destructive) {
                     selectedKey = direction
                     selectedIsJoystick = true
+                    hasSelectedControl = true
                     profiles.clearJoystickDirection(direction)
                 }
             }
@@ -1034,19 +1106,19 @@ struct StudioView: View {
     }
 
     @ViewBuilder
-    private func controlFace(label: String, icon: String?, assignment: String,
+    private func controlFace(label: String, icon: String?, iconColor: String?, assignment: String,
                              tileHeight: CGFloat) -> some View {
         VStack(spacing: 2) {
             if showControlLabels && showIcons && icon != nil && !showAssignments {
                 Text(label).font(tileHeight >= 50 ? .subheadline.bold() : .caption.bold())
                     .foregroundStyle(accent).lineLimit(1)
-                G13IconView(reference: icon)
+                G13IconView(reference: icon, colorOverride: iconColor)
                     .frame(width: tileHeight >= 50 ? 26 : 16,
                            height: tileHeight >= 50 ? 26 : 16)
             } else if showControlLabels || (showIcons && icon != nil) {
                 HStack(spacing: 3) {
                     if showIcons, let icon {
-                        G13IconView(reference: icon)
+                        G13IconView(reference: icon, colorOverride: iconColor)
                             .frame(width: showControlLabels ? (tileHeight >= 50 ? 20 : 16) : (tileHeight >= 50 ? 30 : 24),
                                    height: showControlLabels ? (tileHeight >= 50 ? 20 : 16) : (tileHeight >= 50 ? 30 : 24))
                     }
@@ -1101,7 +1173,19 @@ struct StudioView: View {
                                             isJoystick: isJoystick) else { return false }
         selectedKey = key
         selectedIsJoystick = isJoystick
+        hasSelectedControl = true
         return true
+    }
+
+    private func selectControl(_ key: String, isJoystick: Bool, toggle: Bool = true) {
+        if toggle && hasSelectedControl && selectedKey == key && selectedIsJoystick == isJoystick {
+            hasSelectedControl = false
+            return
+        }
+        selectedKey = key
+        selectedIsJoystick = isJoystick
+        hasSelectedControl = true
+        if !isJoystick || profiles.activeJoystickMode == .keys { shortcutFocusRequest += 1 }
     }
 
     private var joystickLiveInfo: some View {
@@ -1137,7 +1221,8 @@ struct StudioView: View {
     private func assignmentText(for key: String, isJoystick: Bool) -> String {
         let raw = assignment(for: key, isJoystick: isJoystick)
         if showShortcutText, let command = profiles.command(for: raw) {
-            return command.steps.joined(separator: " → ")
+            return command.kind == .mouseFunction ? command.actionDescription :
+                command.steps.joined(separator: " → ")
         }
         return assignmentName(for: key, isJoystick: isJoystick)
     }
@@ -1194,7 +1279,7 @@ struct StudioView: View {
         }
         let raw = assignment(for: key, isJoystick: isJoystick)
         if let command = profiles.command(for: raw) {
-            return "\(key) · \(command.name)\n\(command.steps.joined(separator: " → "))"
+            return "\(key) · \(command.name)\n\(command.kind == .mouseFunction ? command.actionDescription : command.steps.joined(separator: " → "))"
         }
         return "\(key) · \(assignmentName(for: key, isJoystick: isJoystick))"
     }
@@ -1227,6 +1312,11 @@ struct StudioView: View {
         return reference.hasPrefix("custom:") && G13IconStore.image(for: reference) == nil ? nil : reference
     }
 
+    private func effectiveIconColor(for key: String, isJoystick: Bool) -> String? {
+        profiles.iconColor(for: key, isJoystick: isJoystick) ??
+            profiles.command(for: assignment(for: key, isJoystick: isJoystick))?.iconColor
+    }
+
     private func assignment(for key: String, isJoystick: Bool) -> String {
         if isJoystick {
             switch profiles.activeLayer {
@@ -1243,14 +1333,73 @@ struct StudioView: View {
     }
 
     private var selectedControlIsReserved: Bool {
-        selectedIsJoystick ? profiles.activeJoystickMode.scrolls(selectedKey) :
+        !hasSelectedControl || (selectedIsJoystick ? profiles.activeJoystickMode.scrolls(selectedKey) :
             isReservedDisplayControl(selectedKey)
+        )
+    }
+
+    private var namedCommandPicker: some View {
+        let query = namedCommandSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidates = profiles.commandsVisibleInActiveProfile()
+            .filter { !selectedIsJoystick || $0.kind == .keystroke }
+            .filter { command in
+                query.isEmpty || command.name.localizedCaseInsensitiveContains(query) ||
+                    command.actionDescription.localizedCaseInsensitiveContains(query) ||
+                    (command.applicationBundleID == nil ? "All Apps" : profiles.activeProfileName)
+                        .localizedCaseInsensitiveContains(query)
+            }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Assign named command").font(.headline)
+            TextField("Type a name or shortcut", text: $namedCommandSearch)
+                .textFieldStyle(.roundedBorder)
+                .focused($namedCommandSearchFocused)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(candidates) { command in
+                        Button {
+                            setAssignment(command.assignment)
+                            showNamedCommandPicker = false
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(command.name).fontWeight(.medium)
+                                Text("\(command.actionDescription) · \(command.applicationBundleID == nil ? "All Apps" : profiles.activeProfileName)")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(5)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if candidates.isEmpty {
+                        Text("No matching commands")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(height: 230)
+        }
+        .frame(width: 310)
+        .padding(12)
+        .onAppear { namedCommandSearchFocused = true }
     }
 
     private var assignmentPanel: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 6) {
-            Text("SELECTED CONTROL").font(.caption.bold()).foregroundStyle(accent)
+            HStack {
+                Text("SELECTED CONTROL").font(.caption.bold()).foregroundStyle(accent)
+                Spacer()
+                if hasSelectedControl {
+                    Button { hasSelectedControl = false } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Deselect control")
+                    .accessibilityLabel("Deselect control")
+                }
+            }
+            if hasSelectedControl {
             Text(selectedIsJoystick ? "Joystick \(selectedKey.capitalized)" :
                  (selectedKey == "LEFT" ? "Thumb Left" : selectedKey == "RIGHT" ? "Thumb Bottom" : selectedKey))
                 .font(.title3.bold())
@@ -1272,11 +1421,11 @@ struct StudioView: View {
             }
             Divider()
             Text("Assign named command").font(.subheadline.bold())
-            Menu("Choose command") {
-                ForEach(profiles.commandsVisibleInActiveProfile().filter { !selectedIsJoystick || $0.kind == .keystroke }) { command in
-                    Button(command.name) { setAssignment(command.assignment) }
-                }
+            Button("Choose command…") {
+                namedCommandSearch = ""
+                showNamedCommandPicker = true
             }
+            .popover(isPresented: $showNamedCommandPicker) { namedCommandPicker }
             .disabled(profiles.commands.isEmpty || selectedControlIsReserved)
             Text("Click a control or this field, then press a shortcut. Esc cancels.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -1284,6 +1433,17 @@ struct StudioView: View {
                           focusRequest: shortcutFocusRequest) { setAssignment($0) }
                 .id("\(selectedKey):\(selectedIsJoystick)")
                 .disabled(selectedControlIsReserved)
+            if !selectedIsJoystick, KeyAction.parse(directShortcutForSelectedControl) != nil {
+                Button("Make timed hold command…") {
+                    var new = G13Command(name: "Hold \(directShortcutForSelectedControl)",
+                                         kind: .keystroke, steps: [directShortcutForSelectedControl])
+                    new.holdMilliseconds = 1300
+                    new.applicationBundleID = profiles.activeProfile?.applicationBundleID
+                    assignEditedCommandToSelectedControl = true
+                    editingCommand = new
+                }
+                .disabled(selectedControlIsReserved)
+            }
             Button("Clear assignment") { setAssignment("") }
                 .disabled(selectedControlIsReserved)
             Divider()
@@ -1299,6 +1459,19 @@ struct StudioView: View {
                 }
             }
             .disabled(selectedControlIsReserved)
+            G13IconColorPicker(selection: Binding(
+                get: { profiles.iconColor(for: selectedKey, isJoystick: selectedIsJoystick) },
+                set: { profiles.setIconColor($0, for: selectedKey, isJoystick: selectedIsJoystick) }
+            ))
+            .disabled(selectedControlIsReserved)
+            } else {
+                Text("No control selected")
+                    .font(.title3.bold())
+                Text("Select a G13 key or joystick direction to view and edit its assignment. Click it again to deselect.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if runtime.isSafeTestMode {
                 Divider()
                 Text("SAFE TEST · NO OUTPUT SENT")
@@ -1322,7 +1495,7 @@ struct StudioView: View {
     }
 
     private func setAssignment(_ value: String) {
-        guard !selectedControlIsReserved else { return }
+        guard hasSelectedControl, !selectedControlIsReserved else { return }
         if selectedIsJoystick {
             if value.isEmpty { profiles.clearJoystickDirection(selectedKey) }
             else { profiles.setJoystickDirection(selectedKey, to: value) }
@@ -1500,114 +1673,166 @@ private struct CommandEditor: View {
                 Picker("Type", selection: $command.kind) {
                     Text("Keystroke").tag(G13Command.Kind.keystroke)
                     Text("Multi Key").tag(G13Command.Kind.multiKey)
+                    Text("Mouse").tag(G13Command.Kind.mouseFunction)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 230)
+                .frame(width: 300)
                 .onChange(of: command.kind) { _, kind in
                     recording = false
+                    if kind != .keystroke { command.holdMilliseconds = nil }
                     if kind == .keystroke { command.steps = Array(command.steps.prefix(1)) }
-                }
-            }
-            TextField("Command name", text: $command.name)
-            Picker("Available in", selection: $command.applicationBundleID) {
-                Text("All Apps").tag(String?.none)
-                if let appBundleID {
-                    Text(appName).tag(Optional(appBundleID))
-                }
-            }
-            .pickerStyle(.menu)
-            .onChange(of: command.applicationBundleID) { _, _ in command.folderID = nil }
-            HStack {
-                Picker("Folder", selection: $command.folderID) {
-                    Text("Unfiled").tag(UUID?.none)
-                    ForEach(profiles.folders(for: command.applicationBundleID)) { folder in
-                        Text(folder.name).tag(Optional(folder.id))
+                    if kind == .mouseFunction {
+                        command.steps = []
+                        command.mouseAction = command.mouseAction ?? .leftClick
                     }
                 }
-                .pickerStyle(.menu)
-                Button("New folder…") {
-                    newFolderName = ""
-                    showNewFolder = true
-                }
             }
-            .alert("New command folder", isPresented: $showNewFolder) {
-                TextField("Folder name", text: $newFolderName)
-                Button("Create") {
-                    if let folder = profiles.addCommandFolder(name: newFolderName,
-                                           applicationBundleID: command.applicationBundleID) {
-                        command.folderID = folder.id
-                    } else {
-                        folderCreationError = "Use a unique folder name between 1 and 80 characters."
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This folder will belong to \(command.applicationBundleID == nil ? "All Apps" : appName).")
-            }
-            .alert("Folder name", isPresented: Binding(
-                get: { folderCreationError != nil }, set: { if !$0 { folderCreationError = nil } }
-            )) {
-                Button("OK") { folderCreationError = nil }
-            } message: {
-                Text(folderCreationError ?? "")
-            }
-            HStack {
-                Text("Command image")
-                G13IconPicker(selectedReference: command.iconReference,
-                              inheritedReference: nil, allowInherit: false) { reference in
-                    command.iconReference = reference
-                }
-            }
-            HStack {
-                TextField("Key or chord (for example CMD+S)", text: $newStep)
-                    .onSubmit(addStep)
-                    .frame(width: 315)
-                Button("Find key…") {
-                    keySearch = ""
-                    showKeySearch = true
-                }
-                .popover(isPresented: $showKeySearch) {
-                    keySearchPopover
-                }
-                Button("Add") { addStep() }
-                    .disabled(!canAdd)
-            }
-            Button(recording ? "Stop recording" : "Record keys in this window") {
-                recording.toggle()
-                recordingMessage = recording ? "Hold modifiers, then press a key…" : ""
-            }
-            .buttonStyle(.borderedProminent)
-            Text(recording ? recordingMessage :
-                 "Record complete shortcuts here. Keystroke stops after one; Multi Key continues until Stop.")
-                .font(.caption).foregroundStyle(.secondary)
-                .frame(height: 28, alignment: .topLeading)
-            GeometryReader { viewport in
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(command.steps.enumerated()), id: \.offset) { index, step in
-                            HStack {
-                                Text("\(index + 1). \(step)")
-                                Spacer()
-                                Button("Remove") { command.steps.remove(at: index) }
-                            }
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 14) {
+                    TextField("Command name", text: $command.name)
+                    Picker("Available in", selection: $command.applicationBundleID) {
+                        Text("All Apps").tag(String?.none)
+                        if let appBundleID {
+                            Text(appName).tag(Optional(appBundleID))
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(minHeight: viewport.size.height, alignment: .topLeading)
+                    .pickerStyle(.menu)
+                    .onChange(of: command.applicationBundleID) { _, _ in command.folderID = nil }
+                    HStack {
+                        Picker("Folder", selection: $command.folderID) {
+                            Text("Unfiled").tag(UUID?.none)
+                            ForEach(profiles.folders(for: command.applicationBundleID)) { folder in
+                                Text(folder.name).tag(Optional(folder.id))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        Button("New folder…") {
+                            newFolderName = ""
+                            showNewFolder = true
+                        }
+                    }
+                    .alert("New command folder", isPresented: $showNewFolder) {
+                        TextField("Folder name", text: $newFolderName)
+                        Button("Create") {
+                            if let folder = profiles.addCommandFolder(name: newFolderName,
+                                                   applicationBundleID: command.applicationBundleID) {
+                                command.folderID = folder.id
+                            } else {
+                                folderCreationError = "Use a unique folder name between 1 and 80 characters."
+                            }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("This folder will belong to \(command.applicationBundleID == nil ? "All Apps" : appName).")
+                    }
+                    .alert("Folder name", isPresented: Binding(
+                        get: { folderCreationError != nil }, set: { if !$0 { folderCreationError = nil } }
+                    )) {
+                        Button("OK") { folderCreationError = nil }
+                    } message: {
+                        Text(folderCreationError ?? "")
+                    }
+                    HStack {
+                        Text("Command image")
+                        G13IconPicker(selectedReference: command.iconReference,
+                                      inheritedReference: nil, allowInherit: false) { reference in
+                            command.iconReference = reference
+                        }
+                    }
+                    G13IconColorPicker(selection: $command.iconColor)
+                    if command.kind == .mouseFunction {
+                        Picker("Mouse action", selection: $command.mouseAction) {
+                            ForEach(G13MouseAction.allCases, id: \.self) { action in
+                                Text(action.label).tag(Optional(action))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        Text("Modifiers for this click")
+                            .font(.subheadline.bold())
+                        HStack(spacing: 12) {
+                            ForEach(G13MouseModifier.allCases, id: \.self) { modifier in
+                                Toggle(modifier.label, isOn: Binding(
+                                    get: { command.mouseModifiers?.contains(modifier) == true },
+                                    set: { enabled in
+                                        var selected = command.mouseModifiers ?? []
+                                        if enabled && !selected.contains(modifier) { selected.append(modifier) }
+                                        if !enabled { selected.removeAll { $0 == modifier } }
+                                        command.mouseModifiers = selected
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+                        Text("Clicks at the pointer’s current position with these modifiers, plus any G13 modifiers already held.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                    HStack {
+                        TextField("Key or chord (for example CMD+S)", text: $newStep)
+                            .onSubmit(addStep)
+                            .frame(width: 315)
+                        Button("Find key…") {
+                            keySearch = ""
+                            showKeySearch = true
+                        }
+                        .popover(isPresented: $showKeySearch) {
+                            keySearchPopover
+                        }
+                        Button("Add") { addStep() }
+                            .disabled(!canAdd)
+                    }
+                    Button(recording ? "Stop recording" : "Record keys in this window") {
+                        recording.toggle()
+                        recordingMessage = recording ? "Hold modifiers, then press a key…" : ""
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Text(recording ? recordingMessage :
+                         "Record complete shortcuts here. Keystroke stops after one; Multi Key continues until Stop.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(height: 28, alignment: .topLeading)
+                    ScrollView(.vertical) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(command.steps.enumerated()), id: \.offset) { index, step in
+                                HStack {
+                                    Text("\(index + 1). \(step)")
+                                    Spacer()
+                                    Button("Remove") { command.steps.remove(at: index) }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                    .frame(height: 96)
+                    if command.kind == .keystroke {
+                        Toggle("Hold key for a set time", isOn: Binding(
+                            get: { command.holdMilliseconds != nil },
+                            set: { command.holdMilliseconds = $0 ? (command.holdMilliseconds ?? 1300) : nil }
+                        ))
+                        if command.holdMilliseconds != nil {
+                            Stepper(value: Binding(
+                                get: { Double(command.holdMilliseconds ?? 1300) / 1000 },
+                                set: { command.holdMilliseconds = Int(($0 * 1000).rounded()) }
+                            ), in: 0.1...30, step: 0.1) {
+                                Text("Duration: \(Double(command.holdMilliseconds ?? 1300) / 1000, specifier: "%.1f") seconds")
+                            }
+                            Text("The G13 key starts the hold. It releases after this time, or immediately on profile change or disconnect.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    HStack {
+                        Text("Delay between keys (ms)")
+                        TextField("50", value: $command.delayMilliseconds, format: .number)
+                            .frame(width: 70)
+                        Text("25–1000").foregroundStyle(.secondary)
+                    }
+                    .frame(height: 26)
+                    .opacity(command.kind == .multiKey ? 1 : 0)
+                    .disabled(command.kind != .multiKey)
+                    .accessibilityHidden(command.kind != .multiKey)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(height: 96)
-            HStack {
-                Text("Delay between keys (ms)")
-                TextField("50", value: $command.delayMilliseconds, format: .number)
-                    .frame(width: 70)
-                Text("25–1000").foregroundStyle(.secondary)
-            }
-            .frame(height: 26)
-            .opacity(command.kind == .multiKey ? 1 : 0)
-            .disabled(command.kind != .multiKey)
-            .accessibilityHidden(command.kind != .multiKey)
-            Spacer()
+            Divider()
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -1617,7 +1842,7 @@ private struct CommandEditor: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(command.name.trimmingCharacters(in: .whitespaces).isEmpty || command.steps.isEmpty)
+                .disabled(command.name.trimmingCharacters(in: .whitespaces).isEmpty || !command.isValidAction)
             }
         }
         .padding(24)
@@ -1627,7 +1852,7 @@ private struct CommandEditor: View {
                 command.steps = [step]
                 recording = false
                 recordingMessage = "Captured \(step)"
-            } else if command.steps.count < 16 {
+            } else if command.kind == .multiKey && command.steps.count < 16 {
                 command.steps.append(step)
                 recordingMessage = "Captured \(step) · \(command.steps.count) of 16 steps"
             } else {
@@ -1638,6 +1863,7 @@ private struct CommandEditor: View {
     }
 
     private var canAdd: Bool {
+        command.kind != .mouseFunction &&
         KeyAction.parse(newStep.trimmingCharacters(in: .whitespaces).uppercased()) != nil &&
         (command.kind == .keystroke || command.steps.count < 16)
     }

@@ -1,5 +1,7 @@
 # G13 Studio
 
+Current version: **2.0.0** (build 3). This is the first major release of the redesigned profile editor.
+
 G13 Studio is a native macOS menu bar app for the Logitech G13 gameboard. It is built on [Bertrand Mansion's original G13 project](https://github.com/golgote/G13). Thank you to Bertrand for making a modern macOS G13 driver available as open source. The original MIT [LICENSE](LICENSE) and copyright notice are retained.
 
 This contribution expands the original key mapper into a profile editor for application shortcuts, including workflows in Avid Pro Tools. It uses SwiftUI, AppKit, IOKit HID, and CoreGraphics, with no third-party packages, network communication, or telemetry.
@@ -18,38 +20,48 @@ This contribution expands the original key mapper into a profile editor for appl
 
 ![G13 Studio PDF key map preview showing the Pro Tools M1 layer](docs/pdf_view.png)
 
-## What this contribution adds
+## G13 Studio 2.0.0
 
-- A keypad diagram with larger G-key tiles, thumb buttons, joystick directions, selected-control editing, hover descriptions, and right-click assignment menus.
+- A keypad diagram with larger G-key tiles, thumb buttons, joystick directions, selected-control editing, hover descriptions, and right-click assignment menus. The editor starts with no key selected; click a control again or use the Selected Control X to clear the selection.
 - A universal **Default (All Apps)** profile plus application-specific profiles. Profiles can activate when their application comes to the front, be duplicated, renamed, deleted with confirmation, and backed up or restored. The editor can remain on a selected profile while output follows the frontmost application.
 - **M1, M2, and M3 as three layers within each profile**, rather than the first three profiles. Each layer keeps its key assignments, key images, joystick mode, and backlight color.
-- Named **Keystroke** and **Multi Key** commands with an in-app shortcut recorder, searchable command list, application-scoped folders, and drag-and-drop assignment to controls or movement between folders.
+- Named **Keystroke**, **Multi Key**, and **Mouse** commands. Mouse commands send left, right, middle, or double clicks at the pointer, optionally with Shift, Control, Option, or Command. Held G13 modifier controls can also combine with clicks. A Keystroke can hold its key or modifier for 0.1 to 30 seconds; profile changes and device disconnects release it early. Keyboard commands have an in-app shortcut recorder, searchable command list, collapsible application-scoped folders, sorting, drag-and-drop assignment, and a searchable alphabetical assignment picker.
 - A starter library of Pro Tools shortcuts and symbols. Check every shortcut against your Pro Tools version and keyboard layout before using it in a session.
-- Built-in and imported PNG/JPEG icons for commands and keys. Settings can show any combination of icon, control label, and assignment. Assignment text can show a command name such as **Undo** or its actual keys such as **CMD+Z**. Keys without icons show text in Icons only mode.
+- Built-in and imported PNG/JPEG icons for commands and keys, including Paste, left/right click, Shift+S, and numpad plus/minus. Icons use an automatic black/light and white/dark palette by default. Settings can choose a shared color and apply it to all icons; each command or key can have its own color. **Original** preserves imported artwork colors. Settings can show any combination of icon, control label, and assignment. Assignment text can show a command name such as **Undo** or its actual keys such as **CMD+Z**. Keys without icons show text in Icons only mode.
 - G13 LCD pages for Overview, a selectable profile list, and approximate CPU/RAM usage. With **Use default display controls** checked, BD cycles pages; L1/L2 navigate profiles and L3 saves the startup profile on the Profiles page. Uncheck it to use saved BD/L shortcuts. The assignments are preserved while display controls are active.
 - Joystick key mode or vertical, horizontal, or both-axis scrolling. In single-axis scroll modes, the other axis can still send keys. Scrolling directions are dimmed in the editor, and vertical and horizontal speeds are separate per profile.
-- **Safe Test**, enabled at each launch, previews actions without sending synthetic keys or scrolling. Held keys and scrolling are released on disconnect, profile changes, and output pause. Warnings flag unassigned keys and potentially destructive assignments.
+- **Safe Test** can be enabled to preview actions without sending synthetic keys, mouse clicks, or scrolling. It starts off, so assigned controls are ready for live output when Accessibility access is granted. Held keys and scrolling are released on disconnect, profile changes, and output pause. Warnings flag unassigned keys and potentially destructive assignments.
 - Portrait or landscape PDF key maps for all three layers of a profile.
+
+The Command editor keeps Save and Cancel visible while its content scrolls. Safe Test starts off for live output when Accessibility access is available. See [the 2.0.0 changelog](CHANGELOG.md) for the complete release summary.
+
+The public source contains no personal profiles or mappings.
 
 ## Requirements and build
 
 - macOS 14.6 or later, full Xcode, and a Logitech G13 for hardware input and LCD/backlight output.
-- macOS Accessibility permission is needed only to send assigned keystrokes and scrolling. Choose **Request Access** in Settings when ready. Safe Test needs no Accessibility grant.
+- macOS Accessibility permission is needed only to send assigned keystrokes, mouse clicks, and scrolling. Choose **Request Access** in Settings when ready. Safe Test needs no Accessibility grant.
 
-Open `G13.xcodeproj`, select the **G13** scheme, and choose **Product → Build** (Cmd-B). The app appears as **G13 Studio**. The project has no required Apple developer team; a distributing organization can apply its own signing and notarization. This source and the locally shared app are not notarized.
+Open `G13.xcodeproj`, select the **G13** scheme, and choose **Product → Build** (Cmd-B). The app appears as **G13 Studio**. The project has no required Apple developer team; a distributing organization can apply its own signing and notarization. The locally shared app is ad hoc signed and not notarized.
 
 The bundle identifier remains `com.openg13.G13` so existing profiles in the current Mac account can be read. Quit an older running G13 build before replacing it. Profiles and commands are saved locally for the Mac account; imported icons are stored in Application Support. G13 onboard profile storage is not supported.
 
 ## Getting started
 
-1. Build and open G13 Studio. Leave **Safe Test** on while checking your mappings.
+1. Build and open G13 Studio. It starts with **Safe Test off**. Turn it on when you want to preview mappings without sending output.
 2. Create or select a profile. **Default (All Apps)** supplies output when the frontmost app has no matching profile. Bind an application profile to an installed app to enable automatic activation; choose its **Auto-switch** setting as needed.
 3. Press M1, M2, or M3 to edit that profile's layer. Click a control and press a shortcut, choose a named command, or drag a command from the Commands list. Use the color controls to set the layer backlight.
-4. Use **+** in Commands to record one Keystroke or a Multi Key sequence. The physical MR button opens the same command editor with Multi Key selected. Commands in **All Apps** are available to every profile; application commands appear in their matching profile.
-5. In Settings, choose which details appear on the keypad and whether assignment text uses command names or keystrokes. Choose joystick mode and, for scrolling, the applicable axis speeds.
-6. When ready for live output, request Accessibility access in Settings and turn Safe Test off. Start with a disposable document or Pro Tools session.
+4. Use **+** in Commands to record one Keystroke or a Multi Key sequence. For a timed hold, choose Keystroke and enable **Hold key for a set time**, then set the duration and assign the command to a control. If a control has a direct shortcut, its Selected Control panel has **Make timed hold command…**. The physical MR button opens the same command editor with Multi Key selected. Commands in **All Apps** are available to every profile; application commands appear in their matching profile.
+5. In Settings, choose which details appear on the keypad, the shared icon color, and whether assignment text uses command names or keystrokes. Choose joystick mode and, for scrolling, the applicable axis speeds.
+6. For live output, request Accessibility access in Settings if it has not already been granted. Start with a disposable document or Pro Tools session.
 
-Opening the editor pauses live output so shortcuts do not enter the editor. Safe Test previews the selected profile there. Away from the editor, the status row identifies the output profile. A manually selected unbound profile can supply output in any application until the frontmost app changes.
+Opening the editor pauses live output so shortcuts do not enter the editor. When enabled, Safe Test previews the selected profile there. Away from the editor, the status row identifies the output profile. A manually selected unbound profile can supply output in any application until the frontmost app changes.
+
+## If an assigned key or click does not work
+
+- Confirm the menu shows **G13 connected**, and check the active M layer and assignment in the editor.
+- Turn **Safe Test** off, then bring the target application to the front. The editor pauses live output while it is frontmost.
+- If the status row says **Accessibility needed**, use **Settings → Request Access** and enable the exact G13 Studio build in macOS **Privacy & Security → Accessibility**. A rebuilt or moved app may need its access checked again.
 
 ## Screen and controls
 
@@ -59,7 +71,7 @@ The joystick's deadzone sets how far it moves before a key or scroll action begi
 
 ## Safety and architecture
 
-The app matches the G13 by USB vendor ID `0x046D` and product ID `0xC21C` through `IOHIDManager`. Eight-byte input reports carry keys and joystick position. HID output and feature reports update the 160×43 LCD, RGB backlight, and M-key LEDs. `CGEvent` sends assigned macOS keyboard and scroll events after Accessibility permission is granted. No kernel extension, administrator privilege, external service, or shell command is required at runtime.
+The app matches the G13 by USB vendor ID `0x046D` and product ID `0xC21C` through `IOHIDManager`. Eight-byte input reports carry keys and joystick position. HID output and feature reports update the 160×43 LCD, RGB backlight, and M-key LEDs. `CGEvent` sends assigned macOS keyboard, mouse click, and scroll events after Accessibility permission is granted. No kernel extension, administrator privilege, external service, or shell command is required at runtime.
 
 The USB input buffer remains owned until callbacks are unregistered. The mapper tracks key-down actions so key-up uses the same mapping, even if a profile changes. The `tests/` directory contains focused checks for key release, macro cancellation, profile persistence, backup/restore, shortcut capture, display pages, drag payloads, icons, and PDF layout. These checks complement testing with a physical G13 and the target application.
 

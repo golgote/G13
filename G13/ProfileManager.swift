@@ -67,6 +67,9 @@ struct G13Profile: Codable, Identifiable, Equatable {
     var keyIcons: [String: String]?
     var m2KeyIcons: [String: String]?
     var m3KeyIcons: [String: String]?
+    var keyIconColors: [String: String]?
+    var m2KeyIconColors: [String: String]?
+    var m3KeyIconColors: [String: String]?
     var autoSwitch: Bool?
     var joystickMode: G13JoystickMode?
     var m2JoystickMode: G13JoystickMode?
@@ -95,6 +98,9 @@ struct G13Profile: Codable, Identifiable, Equatable {
         self.keyIcons = [:]
         self.m2KeyIcons = [:]
         self.m3KeyIcons = [:]
+        self.keyIconColors = [:]
+        self.m2KeyIconColors = [:]
+        self.m3KeyIconColors = [:]
         self.autoSwitch = false
         self.joystickMode = .keys
         self.m2JoystickMode = .keys
@@ -758,6 +764,9 @@ class ProfileManager: ObservableObject {
             profile.keyIcons = current.keyIcons
             profile.m2KeyIcons = current.m2KeyIcons
             profile.m3KeyIcons = current.m3KeyIcons
+            profile.keyIconColors = current.keyIconColors
+            profile.m2KeyIconColors = current.m2KeyIconColors
+            profile.m3KeyIconColors = current.m3KeyIconColors
             profile.joystickMode = current.joystickMode
             profile.m2JoystickMode = current.m2JoystickMode
             profile.m3JoystickMode = current.m3JoystickMode
@@ -987,6 +996,51 @@ class ProfileManager: ObservableObject {
         case 3: profiles[activeProfileIndex].m3KeyIcons?.removeValue(forKey: id)
         default: profiles[activeProfileIndex].keyIcons?.removeValue(forKey: id)
         }
+        switch activeLayer {
+        case 2: profiles[activeProfileIndex].m2KeyIconColors?.removeValue(forKey: id)
+        case 3: profiles[activeProfileIndex].m3KeyIconColors?.removeValue(forKey: id)
+        default: profiles[activeProfileIndex].keyIconColors?.removeValue(forKey: id)
+        }
+    }
+
+    func iconColor(for key: String, isJoystick: Bool) -> String? {
+        guard let profile = activeProfile else { return nil }
+        let id = iconKey(key, isJoystick: isJoystick)
+        switch activeLayer {
+        case 2: return profile.m2KeyIconColors?[id]
+        case 3: return profile.m3KeyIconColors?[id]
+        default: return profile.keyIconColors?[id]
+        }
+    }
+
+    func setIconColor(_ color: String?, for key: String, isJoystick: Bool) {
+        guard profiles.indices.contains(activeProfileIndex) else { return }
+        let id = iconKey(key, isJoystick: isJoystick)
+        switch activeLayer {
+        case 2:
+            var values = profiles[activeProfileIndex].m2KeyIconColors ?? [:]
+            values[id] = color
+            profiles[activeProfileIndex].m2KeyIconColors = values
+        case 3:
+            var values = profiles[activeProfileIndex].m3KeyIconColors ?? [:]
+            values[id] = color
+            profiles[activeProfileIndex].m3KeyIconColors = values
+        default:
+            var values = profiles[activeProfileIndex].keyIconColors ?? [:]
+            values[id] = color
+            profiles[activeProfileIndex].keyIconColors = values
+        }
+        save()
+    }
+
+    func clearAllIconColorOverrides() {
+        for index in profiles.indices {
+            profiles[index].keyIconColors = [:]
+            profiles[index].m2KeyIconColors = [:]
+            profiles[index].m3KeyIconColors = [:]
+        }
+        for index in commands.indices { commands[index].iconColor = nil }
+        save()
     }
 
     func iconReference(for key: String, isJoystick: Bool) -> String? {
@@ -1021,14 +1075,16 @@ class ProfileManager: ObservableObject {
 
     func saveCommand(_ command: G13Command) {
         guard !command.name.trimmingCharacters(in: .whitespaces).isEmpty,
-              !command.steps.isEmpty, command.steps.count <= 16,
-              command.steps.allSatisfy({ KeyAction.parse($0) != nil }),
+              command.isValidAction,
               command.folderID.map({ id in commandFolders.contains(where: {
                   $0.id == id && $0.applicationBundleID?.lowercased() == command.applicationBundleID?.lowercased()
               }) }) ?? true else { return }
         if let index = commands.firstIndex(where: { $0.id == command.id }) {
             if commands[index].steps != command.steps ||
                commands[index].kind != command.kind ||
+               commands[index].mouseAction != command.mouseAction ||
+               commands[index].mouseModifiers != command.mouseModifiers ||
+               commands[index].holdMilliseconds != command.holdMilliseconds ||
                commands[index].applicationBundleID?.lowercased() != command.applicationBundleID?.lowercased() {
                 beforeInputConfigurationChange?()
             }
@@ -1077,16 +1133,40 @@ class ProfileManager: ObservableObject {
 }
 
 struct G13Command: Codable, Identifiable, Equatable {
-    enum Kind: String, Codable { case keystroke, multiKey }
+    enum Kind: String, Codable { case keystroke, multiKey, mouseFunction }
     var id = UUID()
     var name: String
     var kind: Kind
     var steps: [String]
+    var mouseAction: G13MouseAction?
+    var mouseModifiers: [G13MouseModifier]?
     var delayMilliseconds: Int = 50
     var iconReference: String?
+    var iconColor: String?
+    var holdMilliseconds: Int?
     var applicationBundleID: String?
     var folderID: UUID?
     var assignment: String { "@" + id.uuidString }
+    var isValidAction: Bool {
+        switch kind {
+        case .keystroke: return steps.count == 1 && KeyAction.parse(steps[0]) != nil &&
+            (holdMilliseconds.map { (100...30_000).contains($0) } ?? true)
+        case .multiKey: return holdMilliseconds == nil && (1...16).contains(steps.count) &&
+            steps.allSatisfy { KeyAction.parse($0) != nil }
+        case .mouseFunction: return holdMilliseconds == nil && mouseAction != nil && steps.isEmpty
+        }
+    }
+    var actionDescription: String {
+        switch kind {
+        case .keystroke:
+            let shortcut = steps.first ?? "No key"
+            return holdMilliseconds.map { "\(shortcut) · Hold \(Double($0) / 1000) s" } ?? shortcut
+        case .multiKey: return "\(steps.count) steps"
+        case .mouseFunction:
+            let modifiers = G13MouseModifier.allCases.filter { mouseModifiers?.contains($0) == true }
+            return (modifiers.map(\.label) + [mouseAction?.label ?? "Mouse action"]).joined(separator: " + ")
+        }
+    }
 }
 
 struct G13CommandFolder: Codable, Identifiable, Equatable {

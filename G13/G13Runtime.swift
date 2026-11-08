@@ -8,7 +8,7 @@ final class G13Runtime: ObservableObject {
     let device = G13Device()
     let keyMapper = KeyMapper()
     let profileManager = ProfileManager()
-    @Published private(set) var isSafeTestMode = true
+    @Published private(set) var isSafeTestMode = false
     @Published private(set) var testEvents: [String] = []
     @Published private(set) var displayButtonsControlLCD =
         (UserDefaults.standard.object(forKey: "g13DisplayButtonsControlLCD") as? Bool) ?? true
@@ -53,10 +53,23 @@ final class G13Runtime: ObservableObject {
                     return
                 }
                 let assignment = self.profileManager.outputRawKeyMapping[name] ?? ""
-                if let command = self.profileManager.outputCommand(for: assignment), command.kind == .multiKey {
+                if let command = self.profileManager.outputCommand(for: assignment),
+                   command.kind == .multiKey {
                     if pressed {
                         self.keyMapper.playSequence(source: name, steps: command.steps,
                                                     delayMilliseconds: command.delayMilliseconds)
+                    }
+                } else if let command = self.profileManager.outputCommand(for: assignment),
+                          command.kind == .keystroke,
+                          let hold = command.holdMilliseconds {
+                    if pressed, let shortcut = command.steps.first {
+                        self.keyMapper.startTimedHold(source: name, shortcut: shortcut,
+                                                      durationMilliseconds: hold)
+                    }
+                } else if let command = self.profileManager.outputCommand(for: assignment),
+                          command.kind == .mouseFunction {
+                    if pressed, let action = command.mouseAction {
+                        self.keyMapper.performMouseAction(action, modifiers: command.mouseModifiers ?? [])
                     }
                 } else {
                     self.keyMapper.handleKey(name: name, isPressed: pressed,
@@ -202,7 +215,7 @@ final class G13Runtime: ObservableObject {
         let command = profileManager.editorIsFrontmost ? profileManager.command(for: raw) :
             profileManager.outputCommand(for: raw)
         if let command {
-            action = "\(command.name) (\(command.steps.joined(separator: ", ")))"
+            action = "\(command.name) (\(command.actionDescription))"
         } else if raw.hasPrefix("@") {
             action = "unavailable command"
         } else if !raw.isEmpty {

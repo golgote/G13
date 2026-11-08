@@ -50,7 +50,12 @@ enum G13IconStore {
 
     static let composedIcons: [(title: String, reference: String)] = [
         ("Save As", "studio:save-as"),
-        ("Duplicate in Front", "studio:duplicate-front")
+        ("Duplicate in Front", "studio:duplicate-front"),
+        ("Paste", "studio:paste"), ("Left Click", "studio:left-click"),
+        ("Right Click", "studio:right-click"),
+        ("Shift + S", "studio:shift-s"),
+        ("Numpad −", "studio:numpad-minus"),
+        ("Numpad +", "studio:numpad-plus")
     ]
 
     static func matchingComposedIcons(_ query: String) -> [(title: String, reference: String)] {
@@ -222,8 +227,49 @@ enum G13IconStore {
     }
 }
 
+enum G13IconColor: String, CaseIterable {
+    case automatic, black, white, teal, blue, green, orange, purple, red, original
+
+    var title: String { rawValue.capitalized }
+    var color: Color {
+        switch self {
+        case .automatic, .original: return .primary
+        case .black: return .black
+        case .white: return .white
+        case .teal: return .teal
+        case .blue: return .blue
+        case .green: return .green
+        case .orange: return .orange
+        case .purple: return .purple
+        case .red: return .red
+        }
+    }
+}
+
+struct G13IconColorPicker: View {
+    @Binding var selection: String?
+    var body: some View {
+        Picker("Icon color", selection: Binding(
+            get: { selection ?? "inherit" },
+            set: { selection = $0 == "inherit" ? nil : $0 }
+        )) {
+            Text("Use shared color").tag("inherit")
+            ForEach(G13IconColor.allCases, id: \.rawValue) { option in
+                Text(option.title).tag(option.rawValue)
+            }
+        }
+        .pickerStyle(.menu)
+    }
+}
+
 struct G13IconView: View {
     let reference: String?
+    var colorOverride: String? = nil
+    @AppStorage("studioDefaultIconColor") private var sharedColor = "automatic"
+
+    private var chosenColor: G13IconColor {
+        G13IconColor(rawValue: colorOverride ?? sharedColor) ?? .automatic
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -240,19 +286,44 @@ struct G13IconView: View {
                     Image(systemName: "square.on.square")
                         .font(.system(size: side * 0.8, weight: .medium))
                         .scaleEffect(x: -1, y: 1)
+                } else if reference == "studio:paste" {
+                    Image(systemName: "doc.on.clipboard")
+                        .font(.system(size: side * 0.8, weight: .medium))
+                } else if reference == "studio:left-click" || reference == "studio:right-click" {
+                    Image(systemName: "cursorarrow.click")
+                        .font(.system(size: side * 0.8, weight: .medium))
+                        .scaleEffect(x: reference == "studio:right-click" ? -1 : 1, y: 1)
+                } else if reference == "studio:shift-s" {
+                    HStack(spacing: side * 0.04) {
+                        Image(systemName: "shift.fill").font(.system(size: side * 0.52))
+                        Text("S").font(.system(size: side * 0.60, weight: .bold, design: .rounded))
+                    }
+                } else if reference == "studio:numpad-minus" || reference == "studio:numpad-plus" {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: side * 0.13)
+                            .strokeBorder(lineWidth: max(1, side * 0.07))
+                            .frame(width: side * 0.72, height: side * 0.78)
+                        Image(systemName: reference == "studio:numpad-plus" ? "plus" : "minus")
+                            .font(.system(size: side * 0.43, weight: .bold))
+                    }
                 } else if let reference, reference.hasPrefix("sf:") {
                     Image(systemName: String(reference.dropFirst(3)))
                         .font(.system(size: side * 0.8, weight: .medium))
                 } else if let reference, let image = G13IconStore.image(for: reference) {
-                    Image(nsImage: image)
-                        .resizable().scaledToFit()
-                        .frame(width: side * 0.88, height: side * 0.88)
+                    if chosenColor == .original {
+                        Image(nsImage: image).resizable().scaledToFit()
+                            .frame(width: side * 0.88, height: side * 0.88)
+                    } else {
+                        Image(nsImage: image).renderingMode(.template).resizable().scaledToFit()
+                            .frame(width: side * 0.88, height: side * 0.88)
+                    }
                 } else {
                     Image(systemName: "square.dashed")
                         .font(.system(size: side * 0.75))
                         .foregroundStyle(.secondary)
                 }
             }
+            .foregroundStyle(chosenColor.color)
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
     }

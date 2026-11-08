@@ -40,11 +40,13 @@ struct KeyAction: Codable, Equatable {
             }
         }
 
-        // Modifier alone (e.g. G15 mapped to "SHIFT")
+        // A key can hold one or several modifiers without a main key.
+        // The keycode is the first modifier; remaining flags are expanded
+        // into separately owned modifier key-downs by KeyMapper.
         if mainKey == nil {
-            if shift   { return KeyAction(keycode: 0x38, shift: false, control: false, option: false, command: false) }
-            if control { return KeyAction(keycode: 0x3B, shift: false, control: false, option: false, command: false) }
-            if option  { return KeyAction(keycode: 0x3A, shift: false, control: false, option: false, command: false) }
+            if shift   { return KeyAction(keycode: 0x38, shift: false, control: control, option: option, command: command) }
+            if control { return KeyAction(keycode: 0x3B, shift: false, control: false, option: option, command: command) }
+            if option  { return KeyAction(keycode: 0x3A, shift: false, control: false, option: false, command: command) }
             if command { return KeyAction(keycode: 0x37, shift: false, control: false, option: false, command: false) }
             return nil
         }
@@ -72,6 +74,41 @@ struct KeyAction: Codable, Equatable {
 
 // MARK: - KeyMapper
 
+enum G13MouseAction: String, Codable, CaseIterable {
+    case leftClick, rightClick, middleClick, doubleClick
+
+    var label: String {
+        switch self {
+        case .leftClick: return "Left Click"
+        case .rightClick: return "Right Click"
+        case .middleClick: return "Middle Click"
+        case .doubleClick: return "Double Click"
+        }
+    }
+}
+
+enum G13MouseModifier: String, Codable, CaseIterable, Hashable {
+    case shift, control, option, command
+
+    var label: String {
+        switch self {
+        case .shift: return "Shift"
+        case .control: return "Control"
+        case .option: return "Option"
+        case .command: return "Command"
+        }
+    }
+
+    var eventFlag: CGEventFlags {
+        switch self {
+        case .shift: return .maskShift
+        case .control: return .maskControl
+        case .option: return .maskAlternate
+        case .command: return .maskCommand
+        }
+    }
+}
+
 class KeyMapper: ObservableObject {
 
     @Published var hasAccessibility = false
@@ -96,6 +133,8 @@ class KeyMapper: ObservableObject {
     private var pressedOrder: [String] = []
     private var sequenceTasks: [String: Task<Void, Never>] = [:]
     private var sequenceTokens: [String: UUID] = [:]
+    private var timedHoldTimers: [String: Timer] = [:]
+    private var timedHoldActions: [String: KeyAction] = [:]
     private var scrollTimer: Timer?
     private var scrollX: UInt8 = 128
     private var scrollY: UInt8 = 128
@@ -105,6 +144,8 @@ class KeyMapper: ObservableObject {
     private var scrollVertical = true
     private var scrollHorizontal = false
     var scrollSink: ((Int32, Int32) -> Void)?
+    // Receives generated events in tests without posting them to the system.
+    var mouseEventSink: ((CGEventType, CGMouseButton, Int64, CGEventFlags) -> Void)?
     private let eventSink: ((UInt16, Bool, CGEventFlags) -> Void)?
 
     init(eventSink: ((UInt16, Bool, CGEventFlags) -> Void)? = nil) {
@@ -121,6 +162,7 @@ class KeyMapper: ObservableObject {
     deinit {
         accessibilityTimer?.invalidate()
         scrollTimer?.invalidate()
+        for timer in timedHoldTimers.values { timer.invalidate() }
         if let terminationObserver {
             NotificationCenter.default.removeObserver(terminationObserver)
         }
@@ -154,7 +196,7 @@ class KeyMapper: ObservableObject {
     // Handle a G13 key press/release. If the key has no mapping, it is ignored.
     func handleKey(name: String, isPressed: Bool, mapping: [String: KeyAction]) {
         guard !isPressed || hasAccessibility else { return }
-        updateSource("key:\(name)", isPressed: isPressed, action: mapping[name])
+        updateMappedSource("key:\(name)", isPressed: isPressed, action: mapping[name])
     }
 
     // Handle joystick as configurable key directions.
@@ -249,6 +291,9 @@ class KeyMapper: ObservableObject {
     // disconnects, profile edits, permission changes, or normal termination.
     func releaseAllKeys() {
         stopScroll()
+        for timer in timedHoldTimers.values { timer.invalidate() }
+        timedHoldTimers.removeAll()
+        timedHoldActions.removeAll()
         for task in sequenceTasks.values { task.cancel() }
         sequenceTasks.removeAll()
         sequenceTokens.removeAll()
@@ -272,6 +317,29 @@ class KeyMapper: ObservableObject {
         joyRight = false
     }
 
+    // A timed hold outlives the physical G13 key-up. Repeated presses restart
+    // its timer, while releaseAllKeys always balances the synthetic key-down.
+    func startTimedHold(source: String, shortcut: String, durationMilliseconds: Int) {
+        guard hasAccessibility, (100...30_000).contains(durationMilliseconds),
+              let action = KeyAction.parse(shortcut) else { return }
+        let ownership = "timed:\(source)"
+        timedHoldTimers[ownership]?.invalidate()
+        if let previous = timedHoldActions[ownership], previous != action {
+            updateMappedSource(ownership, isPressed: false, action: nil)
+            timedHoldActions.removeValue(forKey: ownership)
+        }
+        if timedHoldActions[ownership] == nil {
+            updateMappedSource(ownership, isPressed: true, action: action)
+            timedHoldActions[ownership] = action
+        }
+        timedHoldTimers[ownership] = Timer.scheduledTimer(withTimeInterval: Double(durationMilliseconds) / 1000,
+                                                          repeats: false) { [weak self] _ in
+            self?.timedHoldTimers.removeValue(forKey: ownership)
+            self?.timedHoldActions.removeValue(forKey: ownership)
+            self?.updateMappedSource(ownership, isPressed: false, action: nil)
+        }
+    }
+
     // A sequence is a finite series of key taps. Cancellation occurs on profile
     // changes, disconnects, permission loss, and termination.
     func playSequence(source: String, steps: [String], delayMilliseconds: Int) {
@@ -282,10 +350,16 @@ class KeyMapper: ObservableObject {
         sequenceTokens[source] = token
         let delay = UInt64(min(max(delayMilliseconds, 25), 1000)) * 1_000_000
         sequenceTasks[source] = Task { @MainActor [weak self] in
-            for step in steps {
+            for (index, step) in steps.enumerated() {
                 guard !Task.isCancelled, let self, let action = KeyAction.parse(step) else { break }
-                self.post(action: action, keyDown: true)
-                self.post(action: action, keyDown: false)
+                if self.isModifierChord(action) {
+                    let stepSource = "sequence:\(source):\(token):\(index)"
+                    self.updateMappedSource(stepSource, isPressed: true, action: action)
+                    self.updateMappedSource(stepSource, isPressed: false, action: nil)
+                } else {
+                    self.post(action: action, keyDown: true)
+                    self.post(action: action, keyDown: false)
+                }
                 try? await Task.sleep(nanoseconds: delay)
             }
             // A canceled predecessor must never remove its replacement task.
@@ -301,6 +375,38 @@ class KeyMapper: ObservableObject {
             if let action = pressedSources[source], action.keycode == keycode { return action }
         }
         return nil
+    }
+
+    private func isModifierChord(_ action: KeyAction) -> Bool {
+        Self.modifierKeycodes.contains(action.keycode) &&
+            (action.shift || action.control || action.option || action.command)
+    }
+
+    // A chord such as ALT+SHIFT owns two independent modifier keys. Releasing
+    // either this source or another source holding the same key stays balanced.
+    private func updateMappedSource(_ source: String, isPressed: Bool, action: KeyAction?) {
+        if !isPressed {
+            updateSource(source, isPressed: false, action: nil)
+            for code in [UInt16(0x38), 0x3B, 0x3A, 0x37] {
+                updateSource("\(source):modifier:\(code)", isPressed: false, action: nil)
+            }
+            return
+        }
+        guard let action else { return }
+        guard isModifierChord(action) else {
+            updateSource(source, isPressed: true, action: action)
+            return
+        }
+        var codes: [UInt16] = [action.keycode]
+        if action.shift { codes.append(0x38) }
+        if action.control { codes.append(0x3B) }
+        if action.option { codes.append(0x3A) }
+        if action.command { codes.append(0x37) }
+        for code in codes {
+            let modifier = KeyAction(keycode: code, shift: false, control: false,
+                                     option: false, command: false)
+            updateSource("\(source):modifier:\(code)", isPressed: true, action: modifier)
+        }
     }
 
     private func updateSource(_ source: String, isPressed: Bool, action: KeyAction?) {
@@ -354,6 +460,48 @@ class KeyMapper: ObservableObject {
     }
 
     // MARK: - CGEvent injection
+
+    func performMouseAction(_ action: G13MouseAction, modifiers: [G13MouseModifier] = []) {
+        guard hasAccessibility else { return }
+        guard let location = CGEvent(source: nil)?.location else { return }
+        var modifierFlags = activeStandaloneModifierFlags()
+        for modifier in modifiers { modifierFlags.insert(modifier.eventFlag) }
+        let button: CGMouseButton
+        let downType: CGEventType
+        let upType: CGEventType
+        switch action {
+        case .leftClick, .doubleClick:
+            button = .left
+            downType = .leftMouseDown
+            upType = .leftMouseUp
+        case .rightClick:
+            button = .right
+            downType = .rightMouseDown
+            upType = .rightMouseUp
+        case .middleClick:
+            button = .center
+            downType = .otherMouseDown
+            upType = .otherMouseUp
+        }
+        let clickCount = action == .doubleClick ? 2 : 1
+        for count in 1...clickCount {
+            if let mouseEventSink {
+                mouseEventSink(downType, button, Int64(count), modifierFlags)
+                mouseEventSink(upType, button, Int64(count), modifierFlags)
+                continue
+            }
+            guard let down = CGEvent(mouseEventSource: nil, mouseType: downType,
+                                     mouseCursorPosition: location, mouseButton: button),
+                  let up = CGEvent(mouseEventSource: nil, mouseType: upType,
+                                   mouseCursorPosition: location, mouseButton: button) else { return }
+            down.setIntegerValueField(.mouseEventClickState, value: Int64(count))
+            up.setIntegerValueField(.mouseEventClickState, value: Int64(count))
+            down.flags = down.flags.union(modifierFlags)
+            up.flags = up.flags.union(modifierFlags)
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+        }
+    }
 
     private func sendKeyEvent(action: KeyAction, keyDown: Bool) {
         var flags = activeStandaloneModifierFlags()
